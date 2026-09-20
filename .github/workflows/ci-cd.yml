@@ -69,5 +69,8 @@ jobs:
             echo "::error::SUPABASE_ACCESS_TOKEN secret is not set in GitHub repository settings!"
             exit 1
           fi
-          supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
-          supabase db push --password "$SUPABASE_DB_PASSWORD"
+          # Strip accidental whitespace or newlines from secrets
+          CLEAN_PROJECT_REF=$(echo "$PROJECT_REF" | tr -d '[:space:]')
+          CLEAN_DB_PASSWORD=$(echo "$SUPABASE_DB_PASSWORD" | tr -d '\r\n')
+          supabase link --project-ref "$CLEAN_PROJECT_REF" --password "$CLEAN_DB_PASSWORD"
+          supabase db push --password "$CLEAN_DB_PASSWORD"
