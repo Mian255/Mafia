@@ -1,0 +1,37 @@
+# Project configuration for Supabase
+project_id = "mafia-game"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["https://**"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_positive_signup = false
+enable_confirmations = false
+
+[auth.anonymous]
+enabled = true
+
+[realtime]
+enabled = true
+port = 54324
