@@ -17,7 +17,8 @@ import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
 
-const mafiaVsDetective = require('../../../assets/mafia_vs_detective_banner.png');
+const mafiaCharImg = require('../../../assets/mafia_transparent.png');
+const civilianCharImg = require('../../../assets/civilian_transparent.png');
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -163,11 +164,25 @@ export default function LoginScreen({
             <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
           </View>
 
-          {/* Character Stage: Mafia & Detective Standing Above Login Box */}
+          {/* Character Stage: Mafia & Civilian Standing On Login Box (Without Solid Backgrounds) */}
           <View style={styles.charactersStage}>
-            <View style={styles.stageRedGlow} />
-            <View style={styles.stageBlueGlow} />
-            <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
+            {/* Left: Mafia Character */}
+            <View style={styles.mafiaContainer}>
+              <View style={styles.stageRedGlow} />
+              <Image source={mafiaCharImg} style={styles.mafiaImage} resizeMode="contain" />
+            </View>
+
+            {/* Central Vertical Neon Divider */}
+            <View style={styles.stageDivider}>
+              <View style={styles.dividerGlow} />
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* Right: Civilian Character */}
+            <View style={styles.civilianContainer}>
+              <View style={styles.stageBlueGlow} />
+              <Image source={civilianCharImg} style={styles.civilianImage} resizeMode="contain" />
+            </View>
           </View>
 
           {/* Login Box Container */}
@@ -373,48 +388,85 @@ const styles = StyleSheet.create({
 
   /* Characters Standing Stage */
   charactersStage: {
-    width: SCREEN_WIDTH * 0.94,
-    height: SCREEN_HEIGHT * 0.26,
+    width: SCREEN_WIDTH * 0.88,
+    height: SCREEN_HEIGHT * 0.24,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    position: 'relative',
+    marginTop: 6,
+    marginBottom: -12,
+    zIndex: 2,
+  },
+  mafiaContainer: {
+    flex: 1,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'flex-end',
     position: 'relative',
-    marginTop: 2,
-    marginBottom: -16,
-    zIndex: 2,
+  },
+  mafiaImage: {
+    width: '90%',
+    height: '95%',
   },
   stageRedGlow: {
     position: 'absolute',
-    left: '10%',
-    top: '20%',
-    width: 90,
-    height: 90,
-    backgroundColor: 'rgba(220, 38, 38, 0.28)',
-    borderRadius: 50,
+    bottom: 10,
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(220, 38, 38, 0.22)',
+    borderRadius: 40,
     shadowColor: '#dc2626',
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
+    shadowOpacity: 0.7,
+    shadowRadius: 25,
+  },
+  stageDivider: {
+    width: 1,
+    height: '75%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginHorizontal: 4,
+  },
+  dividerGlow: {
+    position: 'absolute',
+    width: 6,
+    height: '100%',
+    backgroundColor: 'rgba(253, 230, 138, 0.2)',
+    borderRadius: 3,
+  },
+  dividerLine: {
+    width: 1.5,
+    height: '100%',
+    backgroundColor: 'rgba(253, 230, 138, 0.55)',
+  },
+  civilianContainer: {
+    flex: 1,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    position: 'relative',
+  },
+  civilianImage: {
+    width: '95%',
+    height: '90%',
   },
   stageBlueGlow: {
     position: 'absolute',
-    right: '10%',
-    top: '20%',
-    width: 90,
-    height: 90,
-    backgroundColor: 'rgba(2, 132, 199, 0.28)',
-    borderRadius: 50,
+    bottom: 10,
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(2, 132, 199, 0.22)',
+    borderRadius: 40,
     shadowColor: '#0284c7',
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
-  },
-  charactersImage: {
-    width: '100%',
-    height: '100%',
+    shadowOpacity: 0.7,
+    shadowRadius: 25,
   },
 
   /* Form Card & Inputs */
   formCard: {
     width: '100%',
-    backgroundColor: 'rgba(11, 18, 32, 0.92)',
+    backgroundColor: 'rgba(11, 18, 32, 0.94)',
     borderRadius: 22,
     paddingHorizontal: 20,
     paddingTop: 24,
