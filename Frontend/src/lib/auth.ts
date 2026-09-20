@@ -1,4 +1,5 @@
 import * as WebBrowser from 'expo-web-browser';
+import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { makeRedirectUri } from 'expo-auth-session';
 import { supabase } from './supabase';
 
@@ -8,17 +9,27 @@ try {
   // Ignored in headless/initial contexts
 }
 
-function extractParam(url: string, param: string): string | null {
-  const regex = new RegExp(`[#?&]${param}=([^&#]*)`);
-  const match = url.match(regex);
-  return match ? decodeURIComponent(match[1]) : null;
-}
+const createSessionFromUrl = async (url: string) => {
+  const { params, errorCode } = QueryParams.getQueryParams(url);
+  if (errorCode) {
+    throw new Error(errorCode);
+  }
+
+  const { access_token, refresh_token } = params;
+  if (access_token && refresh_token) {
+    const { data, error } = await supabase.auth.setSession({
+      access_token,
+      refresh_token,
+    });
+    if (error) throw error;
+    return data.session;
+  }
+  return null;
+};
 
 export async function signInWithGoogle() {
   const redirectUrl = makeRedirectUri({
     scheme: 'mafia',
-    path: 'auth/callback',
-    preferLocalhost: false,
   });
 
   console.log('[Google Auth] Redirect URI:', redirectUrl);
@@ -42,20 +53,11 @@ export async function signInWithGoogle() {
   if (data?.url) {
     const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
     if (res.type === 'success' && res.url) {
-      const accessToken = extractParam(res.url, 'access_token');
-      const refreshToken = extractParam(res.url, 'refresh_token');
-
-      if (accessToken && refreshToken) {
-        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
-        if (sessionError) throw sessionError;
-        return sessionData;
-      }
+      return await createSessionFromUrl(res.url);
     }
   }
 
   return null;
 }
+
 
