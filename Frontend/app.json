@@ -2,14 +2,17 @@
   "expo": {
     "name": "Mafia",
     "slug": "mafia",
+    "scheme": "mafia",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mafiagame.app"
     },
     "android": {
+      "package": "com.mafiagame.app",
       "adaptiveIcon": {
         "backgroundColor": "#070e1a",
         "foregroundImage": "./assets/icon.png"
@@ -18,6 +21,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c3f3a713-cf1a-4a62-9a69-09664a8e638f"
+      }
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }

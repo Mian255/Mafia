@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { supabase } from '../../lib/supabase';
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
@@ -44,7 +45,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     ]).start();
   }, [fadeAnim, slideAnim]);
 
-  const handleSignUp = () => {
+  const handleSignUp = async () => {
     if (!alias.trim()) {
       setErrorMessage('Please choose your in-game alias.');
       return;
@@ -65,13 +66,30 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setErrorMessage('');
     setIsLoading(true);
 
-    // Mock signup UI simulation
-    setTimeout(() => {
-      setIsLoading(false);
-      if (onSignUpSuccess) {
-        onSignUpSuccess(alias.trim());
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            username: alias.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        setErrorMessage(error.message);
+      } else if (data?.user) {
+        if (onSignUpSuccess) {
+          onSignUpSuccess(alias.trim());
+        }
       }
-    }, 600);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Registration failed.';
+      setErrorMessage(msg);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
