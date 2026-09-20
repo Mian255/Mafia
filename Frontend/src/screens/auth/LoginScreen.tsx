@@ -11,14 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import Svg, {
-  Defs,
-  LinearGradient,
-  Path,
-  Rect,
-  Stop,
-  Text as SvgText,
-} from 'react-native-svg';
+import Svg, { Defs, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 
 const mafiaVsCivilian = require('../../../assets/mafia vs civilina.jpg');
@@ -134,11 +127,11 @@ function LoginButtonPlaceholder({ top }: { top: number }) {
 const CARD_TOP = SCREEN_HEIGHT * 0.32;
 const CARD_LEFT = SCREEN_WIDTH * 0.09;
 const CARD_RIGHT = SCREEN_WIDTH * 0.09;
-const CARD_HEIGHT = SCREEN_HEIGHT * 0.40;
+const CARD_HEIGHT = SCREEN_HEIGHT * 0.4;
 const INPUT_TOP_USERNAME = CARD_TOP + CARD_HEIGHT * 0.15;
-const INPUT_TOP_PASSWORD = CARD_TOP + CARD_HEIGHT * 0.40;
+const INPUT_TOP_PASSWORD = CARD_TOP + CARD_HEIGHT * 0.4;
 const INPUT_HEIGHT = SCREEN_HEIGHT * 0.085;
-const BUTTON_HEIGHT = SCREEN_HEIGHT * 0.10;
+const BUTTON_HEIGHT = SCREEN_HEIGHT * 0.1;
 const BUTTON_TOP = CARD_TOP + CARD_HEIGHT * 0.65;
 
 function LoginBackground({
@@ -157,19 +150,11 @@ function LoginBackground({
       </View>
 
       <View style={bgStyles.charSlotLeft}>
-        <Image
-          source={mafiaVsCivilian}
-          style={bgStyles.charImgLeft}
-          resizeMode="cover"
-        />
+        <Image source={mafiaVsCivilian} style={bgStyles.charImgLeft} resizeMode="cover" />
       </View>
 
       <View style={bgStyles.charSlotRight}>
-        <Image
-          source={mafiaVsCivilian}
-          style={bgStyles.charImgRight}
-          resizeMode="cover"
-        />
+        <Image source={mafiaVsCivilian} style={bgStyles.charImgRight} resizeMode="cover" />
       </View>
 
       <View style={bgStyles.cardContainer}>
@@ -248,7 +233,10 @@ export default function LoginScreen({
         style={[FILL, styles.overlay]}
         pointerEvents="box-none"
       >
-        <View pointerEvents="auto" style={[styles.inputArea, { top: INPUT_TOP_USERNAME, height: INPUT_HEIGHT }]}>
+        <View
+          pointerEvents="auto"
+          style={[styles.inputArea, { top: INPUT_TOP_USERNAME, height: INPUT_HEIGHT }]}
+        >
           <TextInput
             style={styles.realInput}
             value={username}
@@ -260,7 +248,10 @@ export default function LoginScreen({
           />
         </View>
 
-        <View pointerEvents="auto" style={[styles.inputArea, { top: INPUT_TOP_PASSWORD, height: INPUT_HEIGHT }]}>
+        <View
+          pointerEvents="auto"
+          style={[styles.inputArea, { top: INPUT_TOP_PASSWORD, height: INPUT_HEIGHT }]}
+        >
           <TextInput
             style={styles.realInput}
             value={password}

@@ -1,12 +1,5 @@
 import React from 'react';
-import {
-  Image,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 interface HomeScreenProps {
@@ -14,10 +7,7 @@ interface HomeScreenProps {
   onLogout?: () => void;
 }
 
-export default function HomeScreen({
-  userAlias = 'Operative',
-  onLogout,
-}: HomeScreenProps) {
+export default function HomeScreen({ userAlias = 'Operative', onLogout }: HomeScreenProps) {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />

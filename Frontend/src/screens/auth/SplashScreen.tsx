@@ -4,193 +4,144 @@ import {
   Dimensions,
   Easing,
   Image,
+  Platform,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const splashBgImage = require('../../../assets/splash_clean_test.jpg');
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface SplashScreenProps {
   onFinish?: () => void;
   durationMs?: number;
 }
 
-export default function SplashScreen({
-  onFinish,
-  durationMs = 2800,
-}: SplashScreenProps) {
-  // Master opacity
+export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScreenProps) {
   const [screenOpacity] = useState(() => new Animated.Value(0));
-
-  // Character slide animations
-  const [mafiaSlide] = useState(() => new Animated.Value(-30));
-  const [detectiveSlide] = useState(() => new Animated.Value(30));
-  const [charScale] = useState(() => new Animated.Value(0.96));
-
-  // Glow & divider pulse
-  const [glowAnim] = useState(() => new Animated.Value(0.3));
+  const [contentFadeAnim] = useState(() => new Animated.Value(0));
+  const [contentSlideAnim] = useState(() => new Animated.Value(20));
   const [progressAnim] = useState(() => new Animated.Value(0));
+  const [progressPercent, setProgressPercent] = useState(0);
 
   useEffect(() => {
-    // 1. Entrance animation
-    Animated.parallel([
+    // Track numeric percentage for live text display
+    const listenerId = progressAnim.addListener(({ value }) => {
+      setProgressPercent(Math.min(100, Math.floor(value * 100)));
+    });
+
+    // 1. Initial smooth entrance animation
+    Animated.sequence([
       Animated.timing(screenOpacity, {
         toValue: 1,
-        duration: 700,
-        easing: Easing.out(Easing.cubic),
+        duration: 600,
+        easing: Easing.out(Easing.ease),
         useNativeDriver: true,
       }),
-      Animated.timing(mafiaSlide, {
-        toValue: 0,
-        duration: 900,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(detectiveSlide, {
-        toValue: 0,
-        duration: 900,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(charScale, {
-        toValue: 1,
-        duration: 1000,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(progressAnim, {
-        toValue: 1,
-        duration: durationMs - 500,
-        easing: Easing.inOut(Easing.quad),
-        useNativeDriver: false,
-      }),
+      Animated.parallel([
+        Animated.timing(contentFadeAnim, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(contentSlideAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(progressAnim, {
+          toValue: 1,
+          duration: durationMs - 800,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: false,
+        }),
+      ]),
     ]).start();
 
-    // 2. Continuous pulse
-    const pulseLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowAnim, {
-          toValue: 1,
-          duration: 1000,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(glowAnim, {
-          toValue: 0.3,
-          duration: 1000,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    pulseLoop.start();
-
-    // 3. Exit transition
+    // 2. Smooth fade-out exit when loading completes
     const exitTimer = setTimeout(() => {
       Animated.timing(screenOpacity, {
         toValue: 0,
         duration: 500,
-        easing: Easing.in(Easing.quad),
+        easing: Easing.in(Easing.ease),
         useNativeDriver: true,
       }).start(() => {
-        pulseLoop.stop();
         if (onFinish) {
           onFinish();
         }
       });
-    }, durationMs - 500);
+    }, durationMs - 450);
 
     return () => {
+      progressAnim.removeListener(listenerId);
       clearTimeout(exitTimer);
-      pulseLoop.stop();
     };
-  }, [
-    durationMs,
-    screenOpacity,
-    mafiaSlide,
-    detectiveSlide,
-    charScale,
-    glowAnim,
-    progressAnim,
-    onFinish,
-  ]);
+  }, [durationMs, onFinish, screenOpacity, contentFadeAnim, contentSlideAnim, progressAnim]);
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, { opacity: screenOpacity }]}>
       <StatusBar style="light" />
 
+      {/* Full-Screen Split Artwork Background (Cleaned of static text) */}
+      <Image source={splashBgImage} style={styles.backgroundImage} resizeMode="cover" />
+
+      {/* Subtle Bottom Ambient Gradient for Perfect Text Legibility */}
+      <View style={styles.bottomGradientWrap} pointerEvents="none">
+        <Svg width="100%" height="100%" preserveAspectRatio="none">
+          <Defs>
+            <LinearGradient id="bottomFade" x1="0%" y1="0%" x2="0%" y2="100%">
+              <Stop offset="0%" stopColor="#000000" stopOpacity="0" />
+              <Stop offset="40%" stopColor="#000000" stopOpacity="0.35" />
+              <Stop offset="100%" stopColor="#000000" stopOpacity="0.85" />
+            </LinearGradient>
+          </Defs>
+          <Rect x="0" y="0" width="100%" height="100%" fill="url(#bottomFade)" />
+        </Svg>
+      </View>
+
+      {/* Animated Branding & Live Progress Bar Section */}
       <Animated.View
         style={[
-          styles.contentWrapper,
+          styles.brandingContainer,
           {
-            opacity: screenOpacity,
-            transform: [{ scale: charScale }],
+            opacity: contentFadeAnim,
+            transform: [{ translateY: contentSlideAnim }],
           },
         ]}
       >
-        {/* Side-by-Side Character Cards Split */}
-        <View style={styles.splitSceneContainer}>
-          {/* Left: Mafia Character */}
-          <Animated.View
-            style={[
-              styles.characterHalf,
-              styles.mafiaHalf,
-              { transform: [{ translateX: mafiaSlide }] },
-            ]}
-          >
-            <Image
-              source={require('../../../assets/characters/mafia.png')}
-              style={styles.characterImage}
-              resizeMode="cover"
-            />
-            {/* Crimson atmospheric overlay */}
-            <View style={styles.mafiaOverlay} />
-          </Animated.View>
-
-          {/* Right: Detective Character */}
-          <Animated.View
-            style={[
-              styles.characterHalf,
-              styles.detectiveHalf,
-              { transform: [{ translateX: detectiveSlide }] },
-            ]}
-          >
-            <Image
-              source={require('../../../assets/characters/detective.png')}
-              style={styles.characterImage}
-              resizeMode="cover"
-            />
-            {/* Midnight blue atmospheric overlay */}
-            <View style={styles.detectiveOverlay} />
-          </Animated.View>
-
-          {/* Central Vertical Neon Divider */}
-          <View style={styles.dividerContainer}>
-            <View style={styles.dividerMafiaGlow} />
-            <View style={styles.dividerLine} />
-            <View style={styles.dividerDetectiveGlow} />
+        {/* Ornate Art Deco Top Border with Diamond Crest */}
+        <View style={styles.artDecoHeader}>
+          <View style={styles.artDecoLine} />
+          <View style={styles.artDecoCrest}>
+            <Svg width="36" height="14" viewBox="0 0 36 14">
+              <Path d="M 18 1 L 23 7 L 18 13 L 13 7 Z" fill="#fde68a" />
+              <Path
+                d="M 8 7 L 12 7 M 24 7 L 28 7 M 4 7 L 6 7 M 30 7 L 32 7"
+                stroke="#fde68a"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+              <Path d="M 18 3 L 21 7 L 18 11 L 15 7 Z" fill="#d97706" />
+            </Svg>
           </View>
+          <View style={styles.artDecoLine} />
         </View>
 
-        {/* Ambient Pulsing Glow behind Titles */}
-        <Animated.View style={[styles.centerGlow, { opacity: glowAnim }]} />
+        {/* Main Title: NOIR & CRIME */}
+        <Text style={styles.mainTitleText}>NOIR & CRIME</Text>
 
-        {/* Bottom Section: Branding & Progress Indicator */}
-        <View style={styles.footerContainer}>
-          <View style={styles.titleBadgeRow}>
-            <Text style={styles.mafiaTitle}>MAFIA</Text>
-            <View style={styles.vsBadge}>
-              <Text style={styles.vsBadgeText}>VS</Text>
-            </View>
-            <Text style={styles.detectiveTitle}>DETECTIVE</Text>
-          </View>
+        {/* Subtitle: MOBILE DETECTIVE ADVENTURE */}
+        <Text style={styles.subtitleText}>MOBILE DETECTIVE ADVENTURE</Text>
 
-          <Text style={styles.tagline}>A GAME OF DECEPTION & LOGIC</Text>
-
-          {/* Animated Progress Bar */}
-          <View style={styles.progressBarBg}>
+        {/* Dynamic Animated Progress Bar */}
+        <View style={styles.progressBarContainer}>
+          <View style={styles.progressBarTrack}>
             <Animated.View
               style={[
                 styles.progressBarFill,
@@ -201,12 +152,27 @@ export default function SplashScreen({
                   }),
                 },
               ]}
-            />
+            >
+              <Svg width="100%" height="100%" preserveAspectRatio="none">
+                <Defs>
+                  <LinearGradient id="goldProgressGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <Stop offset="0%" stopColor="#d97706" />
+                    <Stop offset="50%" stopColor="#fde68a" />
+                    <Stop offset="100%" stopColor="#fef08a" />
+                  </LinearGradient>
+                </Defs>
+                <Rect x="0" y="0" width="100%" height="100%" fill="url(#goldProgressGrad)" />
+              </Svg>
+            </Animated.View>
+
+            {/* Centered Percentage Display */}
+            <View style={styles.percentTextContainer} pointerEvents="none">
+              <Text style={styles.percentText}>{progressPercent}%</Text>
+            </View>
           </View>
-          <Text style={styles.loadingText}>INITIALIZING CITY...</Text>
         </View>
       </Animated.View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -214,180 +180,129 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#07090e',
-  },
-  contentWrapper: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
-  splitSceneContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    width: '100%',
-    height: '100%',
     position: 'relative',
   },
-  characterHalf: {
-    flex: 1,
-    height: '100%',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  mafiaHalf: {
-    borderRightWidth: 1,
-    borderRightColor: 'rgba(225, 29, 72, 0.4)',
-  },
-  detectiveHalf: {
-    borderLeftWidth: 1,
-    borderLeftColor: 'rgba(56, 189, 248, 0.4)',
-  },
-  characterImage: {
-    width: '100%',
-    height: '100%',
-  },
-  mafiaOverlay: {
+  backgroundImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
     position: 'absolute',
     top: 0,
     left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(159, 18, 57, 0.1)',
   },
-  detectiveOverlay: {
+  bottomGradientWrap: {
     position: 'absolute',
-    top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(14, 116, 144, 0.1)',
+    height: SCREEN_HEIGHT * 0.45,
   },
-  dividerContainer: {
+
+  /* Branding & Progress Section */
+  brandingContainer: {
     position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: SCREEN_WIDTH / 2 - 2,
-    width: 4,
-    flexDirection: 'row',
+    bottom: SCREEN_HEIGHT * 0.05,
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: SCREEN_WIDTH * 0.08,
     zIndex: 10,
   },
-  dividerLine: {
-    width: 2,
-    height: '100%',
-    backgroundColor: '#ffffff',
-    shadowColor: '#ffffff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
-  },
-  dividerMafiaGlow: {
-    position: 'absolute',
-    left: -3,
-    top: 0,
-    bottom: 0,
-    width: 3,
-    backgroundColor: 'rgba(225, 29, 72, 0.7)',
-  },
-  dividerDetectiveGlow: {
-    position: 'absolute',
-    right: -3,
-    top: 0,
-    bottom: 0,
-    width: 3,
-    backgroundColor: 'rgba(56, 189, 248, 0.7)',
-  },
-  centerGlow: {
-    position: 'absolute',
-    bottom: 110,
-    alignSelf: 'center',
-    width: 260,
-    height: 60,
-    backgroundColor: 'rgba(225, 29, 72, 0.2)',
-    borderRadius: 30,
-    shadowColor: '#38bdf8',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 25,
-    pointerEvents: 'none',
-  },
-  footerContainer: {
-    position: 'absolute',
-    bottom: 40,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    zIndex: 20,
-  },
-  titleBadgeRow: {
+
+  /* Art Deco Header Accent */
+  artDecoHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
+    width: '90%',
+    marginBottom: 4,
   },
-  mafiaTitle: {
-    color: '#ff1744',
-    fontSize: 26,
-    fontWeight: '900',
-    letterSpacing: 2.5,
-    textShadowColor: 'rgba(225, 29, 72, 0.8)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 12,
+  artDecoLine: {
+    flex: 1,
+    height: 1.5,
+    backgroundColor: 'rgba(253, 230, 138, 0.65)',
   },
-  vsBadge: {
-    marginHorizontal: 12,
+  artDecoCrest: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#475569',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  vsBadgeText: {
-    color: '#f8fafc',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-  },
-  detectiveTitle: {
-    color: '#38bdf8',
-    fontSize: 26,
+
+  /* Main Title: NOIR & CRIME */
+  mainTitleText: {
+    color: '#fef3c7',
+    fontSize: SCREEN_WIDTH * 0.115,
     fontWeight: '900',
-    letterSpacing: 2.5,
-    textShadowColor: 'rgba(56, 189, 248, 0.8)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 12,
+    letterSpacing: 4,
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+    textAlign: 'center',
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 3 },
+    textShadowRadius: 8,
+    marginVertical: 2,
   },
-  tagline: {
-    color: '#cbd5e1',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 20,
-    textShadowColor: '#000000',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+
+  /* Subtitle: MOBILE DETECTIVE ADVENTURE */
+  subtitleText: {
+    color: '#fde68a',
+    fontSize: SCREEN_WIDTH * 0.033,
+    fontWeight: '800',
+    letterSpacing: 3,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(0, 0, 0, 0.95)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
+    marginBottom: 16,
   },
-  progressBarBg: {
-    width: '75%',
-    height: 4,
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-    borderRadius: 2,
+
+  /* Progress Bar Container */
+  progressBarContainer: {
+    width: '85%',
+    alignItems: 'center',
+  },
+  progressBarTrack: {
+    width: '100%',
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderWidth: 1.5,
+    borderColor: '#fde68a',
     overflow: 'hidden',
-    marginBottom: 8,
-    borderWidth: 0.5,
-    borderColor: '#334155',
+    position: 'relative',
+    justifyContent: 'center',
+    shadowColor: '#d97706',
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 4,
   },
   progressBarFill: {
-    height: '100%',
-    backgroundColor: '#e11d48',
-    borderRadius: 2,
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 9,
+    overflow: 'hidden',
   },
-  loadingText: {
-    color: '#94a3b8',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.5,
+  percentTextContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+  },
+  percentText: {
+    color: '#1a1005',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textShadowColor: 'rgba(255, 255, 255, 0.4)',
+    textShadowOffset: { width: 0, height: 0.5 },
+    textShadowRadius: 2,
   },
 });
