@@ -16,9 +16,7 @@ interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
 }
 
-export default function ForgotPasswordScreen({
-  onNavigateToLogin,
-}: ForgotPasswordScreenProps) {
+export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswordScreenProps) {
   const [email, setEmail] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -85,9 +83,7 @@ export default function ForgotPasswordScreen({
               <View style={styles.iconCircle}>
                 <Text style={styles.iconEmoji}>{isSubmitted ? '📩' : '🔐'}</Text>
               </View>
-              <Text style={styles.title}>
-                {isSubmitted ? 'DISPATCH SENT' : 'RECOVER ACCESS'}
-              </Text>
+              <Text style={styles.title}>{isSubmitted ? 'DISPATCH SENT' : 'RECOVER ACCESS'}</Text>
               <Text style={styles.subtitle}>
                 {isSubmitted
                   ? `A secret recovery link has been transmitted to ${email}`
@@ -106,7 +102,8 @@ export default function ForgotPasswordScreen({
               <View style={styles.successContainer}>
                 <View style={styles.tipBox}>
                   <Text style={styles.tipText}>
-                    Check your spam and encrypted channels if the email doesn&apos;t arrive in 2 minutes.
+                    Check your spam and encrypted channels if the email doesn&apos;t arrive in 2
+                    minutes.
                   </Text>
                 </View>
 
@@ -146,10 +143,7 @@ export default function ForgotPasswordScreen({
                 </View>
 
                 <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    isLoading && styles.buttonDisabled,
-                  ]}
+                  style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
                   onPress={handleSendRecovery}
                   activeOpacity={0.85}
                   disabled={isLoading}

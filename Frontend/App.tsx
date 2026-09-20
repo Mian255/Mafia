@@ -15,10 +15,7 @@ export default function App() {
   return (
     <View style={styles.container}>
       {currentScreen === 'splash' && (
-        <SplashScreen
-          durationMs={2800}
-          onFinish={() => setCurrentScreen('login')}
-        />
+        <SplashScreen durationMs={2800} onFinish={() => setCurrentScreen('login')} />
       )}
 
       {currentScreen === 'login' && (
@@ -43,16 +40,11 @@ export default function App() {
       )}
 
       {currentScreen === 'forgot-password' && (
-        <ForgotPasswordScreen
-          onNavigateToLogin={() => setCurrentScreen('login')}
-        />
+        <ForgotPasswordScreen onNavigateToLogin={() => setCurrentScreen('login')} />
       )}
 
       {currentScreen === 'home' && (
-        <HomeScreen
-          userAlias={userAlias}
-          onLogout={() => setCurrentScreen('login')}
-        />
+        <HomeScreen userAlias={userAlias} onLogout={() => setCurrentScreen('login')} />
       )}
     </View>
   );
