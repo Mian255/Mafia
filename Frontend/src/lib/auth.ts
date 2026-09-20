@@ -2,7 +2,17 @@ import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 import { supabase } from './supabase';
 
-WebBrowser.maybeCompleteAuthSession();
+try {
+  WebBrowser.maybeCompleteAuthSession();
+} catch {
+  // Ignored in headless/initial contexts
+}
+
+function extractParam(url: string, param: string): string | null {
+  const regex = new RegExp(`[#?&]${param}=([^&#]*)`);
+  const match = url.match(regex);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 export async function signInWithGoogle() {
   const redirectUrl = makeRedirectUri({
@@ -29,13 +39,8 @@ export async function signInWithGoogle() {
   if (data?.url) {
     const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
     if (res.type === 'success' && res.url) {
-      // Parse query or hash params returned by Supabase OAuth
-      const parsedUrl = new URL(res.url);
-      const hashParams = parsedUrl.hash ? new URLSearchParams(parsedUrl.hash.replace(/^#/, '')) : null;
-      const searchParams = parsedUrl.searchParams;
-
-      const accessToken = hashParams?.get('access_token') ?? searchParams.get('access_token');
-      const refreshToken = hashParams?.get('refresh_token') ?? searchParams.get('refresh_token');
+      const accessToken = extractParam(res.url, 'access_token');
+      const refreshToken = extractParam(res.url, 'refresh_token');
 
       if (accessToken && refreshToken) {
         const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
@@ -50,3 +55,4 @@ export async function signInWithGoogle() {
 
   return null;
 }
+
