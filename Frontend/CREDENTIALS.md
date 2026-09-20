@@ -36,3 +36,16 @@ D8:03:C3:D5:BB:F2:3B:6E:C8:58:09:7F:E5:E1:58:33:75:30:22:72:C5:2C:65:5C:E1:2C:73
 ```
 7D:90:52:34:AB:34:71:ED:C0:4C:48:5A:1F:11:D2:BB
 ```
+
+---
+
+## Google OAuth 2.0 Configuration
+
+> Stored securely in `Frontend/.env` and `Backend/.env` (ignored by git).
+
+- **Web Client ID:** Available in `Frontend/.env` (`EXPO_PUBLIC_GOOGLE_CLIENT_ID`) & `Backend/.env`
+- **Web Client Secret:** Available in `Backend/.env` (`GOOGLE_CLIENT_SECRET`)
+- **Android Client ID:** Available in `Backend/.env` (`GOOGLE_ANDROID_CLIENT_ID`)
+- **Authorized Redirect URI:** `https://cfutaueuomfqkmqystkk.supabase.co/auth/v1/callback`
+
+
