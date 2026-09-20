@@ -1,0 +1,9 @@
+# Root .gitignore
+node_modules/
+.env
+.env.local
+.env*.local
+*.log
+.agent-cache/
+.DS_Store
+Thumbs.db
