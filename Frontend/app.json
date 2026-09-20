@@ -7,9 +7,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mafiagame.app"
     },
     "android": {
+      "package": "com.mafiagame.app",
       "adaptiveIcon": {
         "backgroundColor": "#070e1a",
         "foregroundImage": "./assets/icon.png"
