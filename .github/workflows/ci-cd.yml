@@ -1,9 +1,10 @@
-name: CI/CD Pipeline (Main)
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 jobs:
