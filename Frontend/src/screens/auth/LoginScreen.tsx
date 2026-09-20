@@ -18,10 +18,11 @@ import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/auth';
 
-const mafiaCharImg = require('../../../assets/mafia_transparent.png');
-const civilianCharImg = require('../../../assets/civilian_transparent.png');
+const mafiaVsDetective = require('../../../assets/characters_transparent.png');
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CHARACTERS_WIDTH = Math.min(SCREEN_WIDTH * 0.74, 280);
+const CHARACTERS_HEIGHT = CHARACTERS_WIDTH / (1042 / 499);
 
 interface LoginScreenProps {
   onNavigateToSignUp?: () => void;
@@ -46,17 +47,15 @@ export default function LoginScreen({
     setGoogleLoading(true);
     try {
       const session = await signInWithGoogle();
-      if (session?.user) {
-        const username =
+      if (session?.user && onLoginSuccess) {
+        onLoginSuccess(
           session.user.user_metadata?.full_name ||
-          session.user.email?.split('@')[0] ||
-          'Player';
-        if (onLoginSuccess) {
-          onLoginSuccess(username);
-        }
+            session.user.email?.split('@')[0] ||
+            'Operative'
+        );
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Google sign-in failed.';
+      const message = err instanceof Error ? err.message : 'Google sign in failed.';
       Alert.alert('Google Sign-In', message);
     } finally {
       setGoogleLoading(false);
@@ -187,190 +186,177 @@ export default function LoginScreen({
             <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
           </View>
 
-          {/* Character Stage: Mafia & Civilian Standing On Login Box (Without Solid Backgrounds) */}
-          <View style={styles.charactersStage}>
-            {/* Left: Mafia Character */}
-            <View style={styles.mafiaContainer}>
-              <View style={styles.stageRedGlow} />
-              <Image source={mafiaCharImg} style={styles.mafiaImage} resizeMode="contain" />
+          {/* Form & Characters Combined Unit */}
+          <View style={styles.formWrapper}>
+            {/* Character Stage: Mafia & Detective Standing Right on Login Box */}
+            <View style={styles.charactersStage}>
+              <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
             </View>
 
-            {/* Central Vertical Neon Divider */}
-            <View style={styles.stageDivider}>
-              <View style={styles.dividerGlow} />
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Right: Civilian Character */}
-            <View style={styles.civilianContainer}>
-              <View style={styles.stageBlueGlow} />
-              <Image source={civilianCharImg} style={styles.civilianImage} resizeMode="contain" />
-            </View>
-          </View>
-
-          {/* Login Box Container */}
-          <View style={styles.formCard}>
-            {/* Username / Email Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.fieldLabel}>USERNAME / EMAIL</Text>
-              <View style={[styles.inputBox, focusedField === 'email' && styles.inputBoxFocused]}>
-                <View style={styles.iconContainer}>
-                  <Svg width="20" height="20" viewBox="0 0 24 24">
-                    <Path
-                      d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
-                      fill={focusedField === 'email' ? '#fbbf24' : '#fde68a'}
-                    />
-                  </Svg>
-                </View>
-                <TextInput
-                  style={styles.textInput}
-                  value={emailOrUsername}
-                  onChangeText={setEmailOrUsername}
-                  placeholder="Enter username or email"
-                  placeholderTextColor="#64748b"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onFocus={() => setFocusedField('email')}
-                  onBlur={() => setFocusedField(null)}
-                />
-              </View>
-            </View>
-
-            {/* Password Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.fieldLabel}>PASSWORD</Text>
-              <View
-                style={[styles.inputBox, focusedField === 'password' && styles.inputBoxFocused]}
-              >
-                <View style={styles.iconContainer}>
-                  <Svg width="20" height="20" viewBox="0 0 24 24">
-                    <Path
-                      d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
-                      fill={focusedField === 'password' ? '#fbbf24' : '#fde68a'}
-                    />
-                  </Svg>
-                </View>
-                <TextInput
-                  style={styles.textInput}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Enter your password"
-                  placeholderTextColor="#64748b"
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  onFocus={() => setFocusedField('password')}
-                  onBlur={() => setFocusedField(null)}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPassword(!showPassword)}
-                  style={styles.eyeButton}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Svg width="20" height="20" viewBox="0 0 24 24">
-                    {showPassword ? (
+            {/* Login Box Container */}
+            <View style={styles.formCard}>
+              {/* Username / Email Input */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.fieldLabel}>USERNAME / EMAIL</Text>
+                <View style={[styles.inputBox, focusedField === 'email' && styles.inputBoxFocused]}>
+                  <View style={styles.iconContainer}>
+                    <Svg width="20" height="20" viewBox="0 0 24 24">
                       <Path
-                        d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
-                        fill="#fde68a"
+                        d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+                        fill={focusedField === 'email' ? '#fbbf24' : '#fde68a'}
                       />
-                    ) : (
-                      <Path
-                        d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"
-                        fill="#94a3b8"
-                      />
-                    )}
-                  </Svg>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Primary Login Button */}
-            <TouchableOpacity
-              style={styles.loginButton}
-              onPress={handleLogin}
-              disabled={loading || guestLoading}
-              activeOpacity={0.85}
-            >
-              <View style={styles.loginButtonBg}>
-                <Svg width="100%" height="100%" preserveAspectRatio="none">
-                  <Defs>
-                    <LinearGradient id="btnGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <Stop offset="0%" stopColor="#dc2626" />
-                      <Stop offset="50%" stopColor="#991b1b" />
-                      <Stop offset="100%" stopColor="#580f0f" />
-                    </LinearGradient>
-                  </Defs>
-                  <Rect
-                    x="0"
-                    y="0"
-                    width="100%"
-                    height="100%"
-                    rx="14"
-                    ry="14"
-                    fill="url(#btnGrad)"
+                    </Svg>
+                  </View>
+                  <TextInput
+                    style={styles.textInput}
+                    value={emailOrUsername}
+                    onChangeText={setEmailOrUsername}
+                    placeholder="Enter username or email"
+                    placeholderTextColor="#64748b"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onFocus={() => setFocusedField('email')}
+                    onBlur={() => setFocusedField(null)}
                   />
-                </Svg>
+                </View>
               </View>
-              {loading ? (
-                <ActivityIndicator color="#fde68a" size="small" />
-              ) : (
-                <Text style={styles.loginButtonText}>LOGIN</Text>
-              )}
-            </TouchableOpacity>
 
-            {/* Google Sign-in Button */}
-            <TouchableOpacity
-              style={styles.googleButton}
-              onPress={handleGoogleLogin}
-              disabled={loading || guestLoading || googleLoading}
-              activeOpacity={0.85}
-            >
-              {googleLoading ? (
-                <ActivityIndicator color="#ffffff" size="small" />
-              ) : (
-                <View style={styles.googleButtonInner}>
-                  <Svg width="18" height="18" viewBox="0 0 24 24">
-                    <Path
-                      fill="#4285F4"
-                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3h3.86c2.26-2.09 3.68-5.17 3.68-9.09z"
-                    />
-                    <Path
-                      fill="#34A853"
-                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.34 24 12 24z"
-                    />
-                    <Path
-                      fill="#FBBC05"
-                      d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.98-3.1z"
-                    />
-                    <Path
-                      fill="#EA4335"
-                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.7 1.29 6.61l3.98 3.1C6.22 6.86 8.87 4.75 12 4.75z"
+              {/* Password Input */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.fieldLabel}>PASSWORD</Text>
+                <View
+                  style={[styles.inputBox, focusedField === 'password' && styles.inputBoxFocused]}
+                >
+                  <View style={styles.iconContainer}>
+                    <Svg width="20" height="20" viewBox="0 0 24 24">
+                      <Path
+                        d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+                        fill={focusedField === 'password' ? '#fbbf24' : '#fde68a'}
+                      />
+                    </Svg>
+                  </View>
+                  <TextInput
+                    style={styles.textInput}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#64748b"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    onFocus={() => setFocusedField('password')}
+                    onBlur={() => setFocusedField(null)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.eyeButton}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Svg width="20" height="20" viewBox="0 0 24 24">
+                      {showPassword ? (
+                        <Path
+                          d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
+                          fill="#fde68a"
+                        />
+                      ) : (
+                        <Path
+                          d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"
+                          fill="#94a3b8"
+                        />
+                      )}
+                    </Svg>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Primary Login Button */}
+              <TouchableOpacity
+                style={styles.loginButton}
+                onPress={handleLogin}
+                disabled={loading || guestLoading || googleLoading}
+                activeOpacity={0.85}
+              >
+                <View style={styles.loginButtonBg}>
+                  <Svg width="100%" height="100%" preserveAspectRatio="none">
+                    <Defs>
+                      <LinearGradient id="btnGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <Stop offset="0%" stopColor="#dc2626" />
+                        <Stop offset="50%" stopColor="#991b1b" />
+                        <Stop offset="100%" stopColor="#580f0f" />
+                      </LinearGradient>
+                    </Defs>
+                    <Rect
+                      x="0"
+                      y="0"
+                      width="100%"
+                      height="100%"
+                      rx="14"
+                      ry="14"
+                      fill="url(#btnGrad)"
                     />
                   </Svg>
-                  <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
                 </View>
-              )}
-            </TouchableOpacity>
+                {loading ? (
+                  <ActivityIndicator color="#fde68a" size="small" />
+                ) : (
+                  <Text style={styles.loginButtonText}>LOGIN</Text>
+                )}
+              </TouchableOpacity>
 
-            {/* Divider OR */}
-            <View style={styles.orDividerContainer}>
-              <View style={styles.orLine} />
-              <Text style={styles.orText}>OR</Text>
-              <View style={styles.orLine} />
+              {/* Google Sign-in Button */}
+              <TouchableOpacity
+                style={styles.googleButton}
+                onPress={handleGoogleLogin}
+                disabled={loading || guestLoading || googleLoading}
+                activeOpacity={0.85}
+              >
+                {googleLoading ? (
+                  <ActivityIndicator color="#1e293b" size="small" />
+                ) : (
+                  <View style={styles.googleButtonInner}>
+                    <Svg width="18" height="18" viewBox="0 0 24 24">
+                      <Path
+                        fill="#4285F4"
+                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3h3.86c2.26-2.09 3.68-5.17 3.68-9.09z"
+                      />
+                      <Path
+                        fill="#34A853"
+                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.34 24 12 24z"
+                      />
+                      <Path
+                        fill="#FBBC05"
+                        d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.98-3.1z"
+                      />
+                      <Path
+                        fill="#EA4335"
+                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.7 1.29 6.61l3.98 3.1C6.22 6.86 8.87 4.75 12 4.75z"
+                      />
+                    </Svg>
+                    <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {/* Divider OR */}
+              <View style={styles.orDividerContainer}>
+                <View style={styles.orLine} />
+                <Text style={styles.orText}>OR</Text>
+                <View style={styles.orLine} />
+              </View>
+
+              {/* Play as Guest Option */}
+              <TouchableOpacity
+                style={styles.guestButton}
+                onPress={handleGuestLogin}
+                disabled={loading || guestLoading || googleLoading}
+                activeOpacity={0.75}
+              >
+                {guestLoading ? (
+                  <ActivityIndicator color="#cbd5e1" size="small" />
+                ) : (
+                  <Text style={styles.guestButtonText}>PLAY AS GUEST</Text>
+                )}
+              </TouchableOpacity>
             </View>
-
-            {/* Play as Guest Option */}
-            <TouchableOpacity
-              style={styles.guestButton}
-              onPress={handleGuestLogin}
-              disabled={loading || guestLoading || googleLoading}
-              activeOpacity={0.75}
-            >
-              {guestLoading ? (
-                <ActivityIndicator color="#cbd5e1" size="small" />
-              ) : (
-                <Text style={styles.guestButtonText}>PLAY AS GUEST</Text>
-              )}
-            </TouchableOpacity>
           </View>
 
           {/* Footer Navigation Links */}
@@ -407,8 +393,8 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: SCREEN_WIDTH * 0.06,
-    paddingTop: Platform.OS === 'ios' ? 50 : 30,
-    paddingBottom: 25,
+    paddingTop: Platform.OS === 'ios' ? 44 : 20,
+    paddingBottom: 20,
     alignItems: 'center',
     justifyContent: 'space-between',
   },
@@ -416,7 +402,7 @@ const styles = StyleSheet.create({
   /* Header Title */
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   titleText: {
     color: '#fde68a',
@@ -450,81 +436,24 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 
+  /* Form & Characters Container */
+  formWrapper: {
+    width: '100%',
+    alignItems: 'center',
+    marginVertical: 2,
+  },
+
   /* Characters Standing Stage */
   charactersStage: {
-    width: SCREEN_WIDTH * 0.88,
-    height: SCREEN_HEIGHT * 0.24,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    position: 'relative',
-    marginTop: 6,
-    marginBottom: -12,
-    zIndex: 2,
-  },
-  mafiaContainer: {
-    flex: 1,
-    height: '100%',
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    position: 'relative',
+    marginBottom: -1,
+    zIndex: 10,
   },
-  mafiaImage: {
-    width: '90%',
-    height: '95%',
-  },
-  stageRedGlow: {
-    position: 'absolute',
-    bottom: 10,
-    width: 80,
-    height: 80,
-    backgroundColor: 'rgba(220, 38, 38, 0.22)',
-    borderRadius: 40,
-    shadowColor: '#dc2626',
-    shadowOpacity: 0.7,
-    shadowRadius: 25,
-  },
-  stageDivider: {
-    width: 1,
-    height: '75%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    marginHorizontal: 4,
-  },
-  dividerGlow: {
-    position: 'absolute',
-    width: 6,
-    height: '100%',
-    backgroundColor: 'rgba(253, 230, 138, 0.2)',
-    borderRadius: 3,
-  },
-  dividerLine: {
-    width: 1.5,
-    height: '100%',
-    backgroundColor: 'rgba(253, 230, 138, 0.55)',
-  },
-  civilianContainer: {
-    flex: 1,
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    position: 'relative',
-  },
-  civilianImage: {
-    width: '95%',
-    height: '90%',
-  },
-  stageBlueGlow: {
-    position: 'absolute',
-    bottom: 10,
-    width: 80,
-    height: 80,
-    backgroundColor: 'rgba(2, 132, 199, 0.22)',
-    borderRadius: 40,
-    shadowColor: '#0284c7',
-    shadowOpacity: 0.7,
-    shadowRadius: 25,
+  charactersImage: {
+    width: CHARACTERS_WIDTH,
+    height: CHARACTERS_HEIGHT,
   },
 
   /* Form Card & Inputs */
@@ -533,7 +462,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(11, 18, 32, 0.94)',
     borderRadius: 22,
     paddingHorizontal: 20,
-    paddingTop: 24,
+    paddingTop: 22,
     paddingBottom: 20,
     borderWidth: 1.5,
     borderColor: 'rgba(253, 230, 138, 0.28)',
@@ -542,7 +471,6 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 10 },
     elevation: 12,
-    zIndex: 5,
   },
   inputGroup: {
     marginBottom: 14,
