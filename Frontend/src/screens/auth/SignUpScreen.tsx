@@ -17,10 +17,7 @@ interface SignUpScreenProps {
   onSignUpSuccess?: (alias: string) => void;
 }
 
-export default function SignUpScreen({
-  onNavigateToLogin,
-  onSignUpSuccess,
-}: SignUpScreenProps) {
+export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: SignUpScreenProps) {
   const [alias, setAlias] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -189,10 +186,7 @@ export default function SignUpScreen({
 
               {/* Submit Button */}
               <TouchableOpacity
-                style={[
-                  styles.primaryButton,
-                  isLoading && styles.buttonDisabled,
-                ]}
+                style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
                 onPress={handleSignUp}
                 activeOpacity={0.85}
                 disabled={isLoading}
@@ -206,10 +200,7 @@ export default function SignUpScreen({
             {/* Footer Navigation */}
             <View style={styles.footer}>
               <Text style={styles.footerText}>Already have an alias?</Text>
-              <TouchableOpacity
-                onPress={onNavigateToLogin}
-                activeOpacity={0.7}
-              >
+              <TouchableOpacity onPress={onNavigateToLogin} activeOpacity={0.7}>
                 <Text style={styles.loginLink}> Log In</Text>
               </TouchableOpacity>
             </View>

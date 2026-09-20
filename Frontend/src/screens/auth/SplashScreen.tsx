@@ -1,13 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Animated,
-  Dimensions,
-  Easing,
-  Image,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, Dimensions, Easing, Image, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -17,10 +9,7 @@ interface SplashScreenProps {
   durationMs?: number;
 }
 
-export default function SplashScreen({
-  onFinish,
-  durationMs = 2800,
-}: SplashScreenProps) {
+export default function SplashScreen({ onFinish, durationMs = 2800 }: SplashScreenProps) {
   // Master opacity
   const [screenOpacity] = useState(() => new Animated.Value(0));
 
