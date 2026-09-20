@@ -1,9 +1,22 @@
-# Root .gitignore
+# Dependencies
 node_modules/
+
+# Environment variables & secrets (NEVER commit secrets or service role keys)
 .env
-.env.local
+.env.*
 .env*.local
+*.env
+**/.env
+**/.env.*
+**/supabase/.env
+
+# Logs
 *.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS & Cache
 .agent-cache/
 .DS_Store
 Thumbs.db
