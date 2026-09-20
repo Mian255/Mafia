@@ -1,6 +1,7 @@
 import React from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { supabase } from '../../lib/supabase';
 
 interface HomeScreenProps {
   userAlias?: string;
@@ -8,6 +9,17 @@ interface HomeScreenProps {
 }
 
 export default function HomeScreen({ userAlias = 'Operative', onLogout }: HomeScreenProps) {
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
+    }
+    if (onLogout) {
+      onLogout();
+    }
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -19,7 +31,7 @@ export default function HomeScreen({ userAlias = 'Operative', onLogout }: HomeSc
             <Text style={styles.aliasName}>{userAlias}</Text>
           </View>
 
-          <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Text style={styles.logoutText}>LOG OUT</Text>
           </TouchableOpacity>
         </View>

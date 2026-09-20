@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { supabase } from '../../lib/supabase';
 
 interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
@@ -41,7 +42,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
     ]).start();
   }, [fadeAnim, slideAnim]);
 
-  const handleSendRecovery = () => {
+  const handleSendRecovery = async () => {
     if (!email.trim() || !email.includes('@')) {
       setErrorMessage('Please enter a valid registered email.');
       return;
@@ -50,11 +51,19 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
     setErrorMessage('');
     setIsLoading(true);
 
-    // Mock API delay
-    setTimeout(() => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      if (error) {
+        setErrorMessage(error.message);
+      } else {
+        setIsSubmitted(true);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to send recovery email.';
+      setErrorMessage(msg);
+    } finally {
       setIsLoading(false);
-      setIsSubmitted(true);
-    }, 600);
+    }
   };
 
   return (
