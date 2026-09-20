@@ -17,9 +17,9 @@ import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
 
-const mafiaDetectiveCard = require('../../../assets/mafia_detective_card.png');
+const mafiaVsDetective = require('../../../assets/mafia_vs_detective_banner.png');
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface LoginScreenProps {
   onNavigateToSignUp?: () => void;
@@ -54,7 +54,6 @@ export default function LoginScreen({
     try {
       let loginEmail = identifier;
       if (!identifier.includes('@')) {
-        // Attempt to match username
         const { data: profile } = await supabase
           .from('profiles')
           .select('id')
@@ -122,22 +121,22 @@ export default function LoginScreen({
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Atmospheric Noir Dual-Tone Ambient Background */}
+      {/* Atmospheric Dual-Tone Noir Background */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <Svg width="100%" height="100%" preserveAspectRatio="none">
           <Defs>
             <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0%" stopColor="#0a1628" />
-              <Stop offset="45%" stopColor="#08101d" />
-              <Stop offset="100%" stopColor="#050a12" />
+              <Stop offset="0%" stopColor="#081220" />
+              <Stop offset="40%" stopColor="#060c16" />
+              <Stop offset="100%" stopColor="#04070d" />
             </LinearGradient>
             <LinearGradient id="ambientRed" x1="0%" y1="0%" x2="100%" y2="0%">
-              <Stop offset="0%" stopColor="#7f1d1d" stopOpacity="0.28" />
-              <Stop offset="50%" stopColor="#000000" stopOpacity="0" />
+              <Stop offset="0%" stopColor="#991b1b" stopOpacity="0.32" />
+              <Stop offset="45%" stopColor="#000000" stopOpacity="0" />
             </LinearGradient>
             <LinearGradient id="ambientBlue" x1="100%" y1="0%" x2="0%" y2="0%">
-              <Stop offset="0%" stopColor="#0369a1" stopOpacity="0.28" />
-              <Stop offset="50%" stopColor="#000000" stopOpacity="0" />
+              <Stop offset="0%" stopColor="#0284c7" stopOpacity="0.30" />
+              <Stop offset="45%" stopColor="#000000" stopOpacity="0" />
             </LinearGradient>
           </Defs>
           <Rect x="0" y="0" width="100%" height="100%" fill="url(#bgGrad)" />
@@ -164,17 +163,14 @@ export default function LoginScreen({
             <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
           </View>
 
-          {/* Character Split Hero Art Card */}
-          <View style={styles.cardWrapper}>
-            <View style={styles.cardGlowLeft} />
-            <View style={styles.cardGlowRight} />
-            <View style={styles.cardFrame}>
-              <Image source={mafiaDetectiveCard} style={styles.cardImage} resizeMode="cover" />
-              <View style={styles.cardInnerBorder} />
-            </View>
+          {/* Character Stage: Mafia & Detective Standing Above Login Box */}
+          <View style={styles.charactersStage}>
+            <View style={styles.stageRedGlow} />
+            <View style={styles.stageBlueGlow} />
+            <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
           </View>
 
-          {/* Form Container */}
+          {/* Login Box Container */}
           <View style={styles.formCard}>
             {/* Username / Email Input */}
             <View style={styles.inputGroup}>
@@ -331,9 +327,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: SCREEN_WIDTH * 0.07,
-    paddingTop: Platform.OS === 'ios' ? 55 : 35,
-    paddingBottom: 30,
+    paddingHorizontal: SCREEN_WIDTH * 0.06,
+    paddingTop: Platform.OS === 'ios' ? 50 : 30,
+    paddingBottom: 25,
     alignItems: 'center',
     justifyContent: 'space-between',
   },
@@ -341,11 +337,11 @@ const styles = StyleSheet.create({
   /* Header Title */
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 4,
   },
   titleText: {
     color: '#fde68a',
-    fontSize: 40,
+    fontSize: 38,
     fontWeight: '900',
     letterSpacing: 6,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
@@ -357,7 +353,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 1,
     backgroundColor: 'rgba(253, 230, 138, 0.35)',
-    marginVertical: 6,
+    marginVertical: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -369,89 +365,68 @@ const styles = StyleSheet.create({
   },
   subtitleText: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     letterSpacing: 2.5,
     textTransform: 'uppercase',
   },
 
-  /* Split Artwork Card */
-  cardWrapper: {
-    width: SCREEN_WIDTH * 0.74,
-    height: SCREEN_WIDTH * 0.7,
-    position: 'relative',
-    marginVertical: 8,
+  /* Characters Standing Stage */
+  charactersStage: {
+    width: SCREEN_WIDTH * 0.94,
+    height: SCREEN_HEIGHT * 0.26,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    position: 'relative',
+    marginTop: 2,
+    marginBottom: -16,
+    zIndex: 2,
   },
-  cardGlowLeft: {
+  stageRedGlow: {
     position: 'absolute',
-    left: -15,
-    top: 20,
-    bottom: 20,
-    width: 50,
-    backgroundColor: 'rgba(185, 28, 28, 0.25)',
-    borderRadius: 30,
+    left: '10%',
+    top: '20%',
+    width: 90,
+    height: 90,
+    backgroundColor: 'rgba(220, 38, 38, 0.28)',
+    borderRadius: 50,
     shadowColor: '#dc2626',
     shadowOpacity: 0.8,
-    shadowRadius: 25,
+    shadowRadius: 30,
   },
-  cardGlowRight: {
+  stageBlueGlow: {
     position: 'absolute',
-    right: -15,
-    top: 20,
-    bottom: 20,
-    width: 50,
-    backgroundColor: 'rgba(2, 132, 199, 0.25)',
-    borderRadius: 30,
+    right: '10%',
+    top: '20%',
+    width: 90,
+    height: 90,
+    backgroundColor: 'rgba(2, 132, 199, 0.28)',
+    borderRadius: 50,
     shadowColor: '#0284c7',
     shadowOpacity: 0.8,
-    shadowRadius: 25,
+    shadowRadius: 30,
   },
-  cardFrame: {
+  charactersImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 22,
-    overflow: 'hidden',
-    backgroundColor: '#0b1320',
-    borderWidth: 2,
-    borderColor: 'rgba(253, 230, 138, 0.35)',
-    shadowColor: '#000000',
-    shadowOpacity: 0.85,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 15,
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
-  },
-  cardInnerBorder: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
 
   /* Form Card & Inputs */
   formCard: {
     width: '100%',
-    backgroundColor: 'rgba(13, 22, 38, 0.85)',
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(253, 230, 138, 0.2)',
+    backgroundColor: 'rgba(11, 18, 32, 0.92)',
+    borderRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(253, 230, 138, 0.28)',
     shadowColor: '#000000',
-    shadowOpacity: 0.7,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
-    marginVertical: 8,
+    shadowOpacity: 0.85,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
+    zIndex: 5,
   },
   inputGroup: {
     marginBottom: 14,
@@ -467,16 +442,16 @@ const styles = StyleSheet.create({
   inputBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#080e18',
+    backgroundColor: '#070d17',
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: 'rgba(217, 119, 6, 0.45)',
-    height: 50,
+    height: 52,
     paddingHorizontal: 14,
   },
   inputBoxFocused: {
     borderColor: '#f59e0b',
-    backgroundColor: '#0a1322',
+    backgroundColor: '#091220',
     shadowColor: '#f59e0b',
     shadowOpacity: 0.35,
     shadowRadius: 8,
@@ -503,7 +478,7 @@ const styles = StyleSheet.create({
 
   /* Buttons */
   loginButton: {
-    height: 50,
+    height: 52,
     borderRadius: 14,
     overflow: 'hidden',
     alignItems: 'center',
@@ -512,8 +487,8 @@ const styles = StyleSheet.create({
     borderColor: '#fde68a',
     marginTop: 6,
     shadowColor: '#dc2626',
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
+    shadowOpacity: 0.55,
+    shadowRadius: 14,
     shadowOffset: { width: 0, height: 4 },
     elevation: 8,
   },
@@ -532,13 +507,13 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   guestButton: {
-    height: 42,
+    height: 44,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(253, 230, 138, 0.25)',
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
     marginTop: 10,
   },
   guestButtonText: {
@@ -555,14 +530,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 6,
-    marginTop: 6,
+    marginTop: 12,
   },
   forgotTouch: {
     paddingVertical: 6,
   },
   forgotText: {
     color: '#fde68a',
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '600',
     letterSpacing: 0.5,
   },
