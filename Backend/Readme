@@ -1,0 +1,50 @@
+# Mafia – Backend
+
+The backend runs on [Supabase](https://supabase.com): database, auth, realtime, and edge functions. All Supabase files live in `backend/supabase/`.
+
+```
+backend/
+└── supabase/
+    ├── config.toml      # project settings
+    ├── migrations/      # SQL changes to the database (tables, security rules)
+    └── functions/       # edge functions (game logic that runs on the server)
+```
+
+## First-time setup (project owner only)
+
+1. Create a project at supabase.com and note its **project ref** and API keys.
+2. In the terminal:
+   ```bash
+   cd backend
+   npx supabase init
+   npx supabase login
+   npx supabase link --project-ref <your-project-ref>
+   ```
+3. Share the project URL and **anon** key with the team (they go in `frontend/.env`).
+
+## Everyday commands (run from `backend/`)
+
+```bash
+npx supabase migration new <name>       # create a new SQL migration file
+npx supabase functions new <name>       # create a new edge function
+npx supabase db push                    # apply migrations to the project (owner only)
+npx supabase functions deploy <name>    # deploy an edge function (owner only)
+```
+
+## Rules
+
+- Change the database only through migration files, never by hand in the dashboard, so every change is reviewed in a PR.
+- Never commit the service-role key or any secrets.
+- Secret game logic (who has which role, night actions, vote results) is decided here on the server, never in the app.
+
+## Git workflow
+
+Nobody pushes directly to `main` or `dev`.
+
+```bash
+git checkout dev && git pull
+git checkout -b feature/<short-name>
+git push -u origin feature/<short-name>
+```
+
+Then open a pull request into `dev`. The project owner reviews and merges it.

@@ -1,0 +1,48 @@
+# Mafia – Frontend
+
+Android app for the Mafia game, built with React Native (Expo) and TypeScript.
+
+## Run it in GitHub Codespaces
+
+1. On GitHub open the repo, click **Code → Codespaces → Create codespace on `dev`**.
+2. In the terminal:
+   ```bash
+   cd frontend
+   npm install
+   ```
+3. Create a file `frontend/.env` (it is git-ignored) and ask the project owner for the values:
+   ```
+   EXPO_PUBLIC_SUPABASE_URL=
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=
+   ```
+4. Start the app:
+   ```bash
+   npx expo start --tunnel
+   ```
+5. On your Android phone, install **Expo Go** from the Play Store and scan the QR code from the terminal.
+
+Codespaces has no Android emulator, so test on a real phone.
+
+## First-time setup (project owner only)
+
+Run once from the repo root, then commit it on a feature branch:
+
+```bash
+npx create-expo-app@latest frontend --template blank-typescript
+cd frontend
+npm install @supabase/supabase-js
+```
+
+If the command complains that `frontend/` is not empty, move this README out, run the command, then move it back.
+
+## Git workflow
+
+Nobody pushes directly to `main` or `dev`.
+
+```bash
+git checkout dev && git pull
+git checkout -b feature/<short-name>
+git push -u origin feature/<short-name>
+```
+
+Then open a pull request into `dev`. The project owner reviews and merges it.
