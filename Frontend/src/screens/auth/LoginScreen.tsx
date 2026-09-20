@@ -16,8 +16,10 @@ import {
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
+import { signInWithGoogle } from '../../lib/auth';
 
-const mafiaVsDetective = require('../../../assets/mafia_vs_detective_banner.png');
+const mafiaCharImg = require('../../../assets/mafia_transparent.png');
+const civilianCharImg = require('../../../assets/civilian_transparent.png');
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -37,7 +39,29 @@ export default function LoginScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    try {
+      const session = await signInWithGoogle();
+      if (session?.user) {
+        const username =
+          session.user.user_metadata?.full_name ||
+          session.user.email?.split('@')[0] ||
+          'Player';
+        if (onLoginSuccess) {
+          onLoginSuccess(username);
+        }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Google sign-in failed.';
+      Alert.alert('Google Sign-In', message);
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     const identifier = emailOrUsername.trim();
@@ -163,11 +187,25 @@ export default function LoginScreen({
             <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
           </View>
 
-          {/* Character Stage: Mafia & Detective Standing Above Login Box */}
+          {/* Character Stage: Mafia & Civilian Standing On Login Box (Without Solid Backgrounds) */}
           <View style={styles.charactersStage}>
-            <View style={styles.stageRedGlow} />
-            <View style={styles.stageBlueGlow} />
-            <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
+            {/* Left: Mafia Character */}
+            <View style={styles.mafiaContainer}>
+              <View style={styles.stageRedGlow} />
+              <Image source={mafiaCharImg} style={styles.mafiaImage} resizeMode="contain" />
+            </View>
+
+            {/* Central Vertical Neon Divider */}
+            <View style={styles.stageDivider}>
+              <View style={styles.dividerGlow} />
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* Right: Civilian Character */}
+            <View style={styles.civilianContainer}>
+              <View style={styles.stageBlueGlow} />
+              <Image source={civilianCharImg} style={styles.civilianImage} resizeMode="contain" />
+            </View>
           </View>
 
           {/* Login Box Container */}
@@ -279,11 +317,52 @@ export default function LoginScreen({
               )}
             </TouchableOpacity>
 
+            {/* Google Sign-in Button */}
+            <TouchableOpacity
+              style={styles.googleButton}
+              onPress={handleGoogleLogin}
+              disabled={loading || guestLoading || googleLoading}
+              activeOpacity={0.85}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <View style={styles.googleButtonInner}>
+                  <Svg width="18" height="18" viewBox="0 0 24 24">
+                    <Path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3h3.86c2.26-2.09 3.68-5.17 3.68-9.09z"
+                    />
+                    <Path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.34 24 12 24z"
+                    />
+                    <Path
+                      fill="#FBBC05"
+                      d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.98-3.1z"
+                    />
+                    <Path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.7 1.29 6.61l3.98 3.1C6.22 6.86 8.87 4.75 12 4.75z"
+                    />
+                  </Svg>
+                  <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* Divider OR */}
+            <View style={styles.orDividerContainer}>
+              <View style={styles.orLine} />
+              <Text style={styles.orText}>OR</Text>
+              <View style={styles.orLine} />
+            </View>
+
             {/* Play as Guest Option */}
             <TouchableOpacity
               style={styles.guestButton}
               onPress={handleGuestLogin}
-              disabled={loading || guestLoading}
+              disabled={loading || guestLoading || googleLoading}
               activeOpacity={0.75}
             >
               {guestLoading ? (
@@ -373,48 +452,85 @@ const styles = StyleSheet.create({
 
   /* Characters Standing Stage */
   charactersStage: {
-    width: SCREEN_WIDTH * 0.94,
-    height: SCREEN_HEIGHT * 0.26,
+    width: SCREEN_WIDTH * 0.88,
+    height: SCREEN_HEIGHT * 0.24,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    position: 'relative',
+    marginTop: 6,
+    marginBottom: -12,
+    zIndex: 2,
+  },
+  mafiaContainer: {
+    flex: 1,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'flex-end',
     position: 'relative',
-    marginTop: 2,
-    marginBottom: -16,
-    zIndex: 2,
+  },
+  mafiaImage: {
+    width: '90%',
+    height: '95%',
   },
   stageRedGlow: {
     position: 'absolute',
-    left: '10%',
-    top: '20%',
-    width: 90,
-    height: 90,
-    backgroundColor: 'rgba(220, 38, 38, 0.28)',
-    borderRadius: 50,
+    bottom: 10,
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(220, 38, 38, 0.22)',
+    borderRadius: 40,
     shadowColor: '#dc2626',
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
+    shadowOpacity: 0.7,
+    shadowRadius: 25,
+  },
+  stageDivider: {
+    width: 1,
+    height: '75%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginHorizontal: 4,
+  },
+  dividerGlow: {
+    position: 'absolute',
+    width: 6,
+    height: '100%',
+    backgroundColor: 'rgba(253, 230, 138, 0.2)',
+    borderRadius: 3,
+  },
+  dividerLine: {
+    width: 1.5,
+    height: '100%',
+    backgroundColor: 'rgba(253, 230, 138, 0.55)',
+  },
+  civilianContainer: {
+    flex: 1,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    position: 'relative',
+  },
+  civilianImage: {
+    width: '95%',
+    height: '90%',
   },
   stageBlueGlow: {
     position: 'absolute',
-    right: '10%',
-    top: '20%',
-    width: 90,
-    height: 90,
-    backgroundColor: 'rgba(2, 132, 199, 0.28)',
-    borderRadius: 50,
+    bottom: 10,
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(2, 132, 199, 0.22)',
+    borderRadius: 40,
     shadowColor: '#0284c7',
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
-  },
-  charactersImage: {
-    width: '100%',
-    height: '100%',
+    shadowOpacity: 0.7,
+    shadowRadius: 25,
   },
 
   /* Form Card & Inputs */
   formCard: {
     width: '100%',
-    backgroundColor: 'rgba(11, 18, 32, 0.92)',
+    backgroundColor: 'rgba(11, 18, 32, 0.94)',
     borderRadius: 22,
     paddingHorizontal: 20,
     paddingTop: 24,
@@ -506,6 +622,50 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
+  googleButton: {
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  googleButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  googleButtonText: {
+    color: '#1e293b',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  orDividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(253, 230, 138, 0.2)',
+  },
+  orText: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginHorizontal: 12,
+  },
   guestButton: {
     height: 44,
     borderRadius: 12,
@@ -514,7 +674,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(253, 230, 138, 0.25)',
     backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    marginTop: 10,
   },
   guestButtonText: {
     color: '#cbd5e1',

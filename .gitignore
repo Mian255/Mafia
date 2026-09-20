@@ -9,6 +9,9 @@ node_modules/
 **/.env
 **/.env.*
 **/supabase/.env
+*secret*.json
+*credentials*.json
+
 
 # Logs
 *.log
