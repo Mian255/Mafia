@@ -1,5 +1,6 @@
 -- =============================================================================
 -- Mafia Game - Complete Database Schema & RLS Policies
+-- Standalone SQL script for Supabase SQL Editor or direct execution
 -- =============================================================================
 
 -- Enable required extensions
@@ -20,14 +21,17 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 -- Profiles RLS: Anyone can view usernames and avatars, users can only update their own profile
+DROP POLICY IF EXISTS "Profiles are viewable by everyone" ON public.profiles;
 CREATE POLICY "Profiles are viewable by everyone" 
     ON public.profiles FOR SELECT 
     USING (true);
 
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 CREATE POLICY "Users can insert their own profile" 
     ON public.profiles FOR INSERT 
     WITH CHECK (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 CREATE POLICY "Users can update their own profile" 
     ON public.profiles FOR UPDATE 
     USING (auth.uid() = id);
@@ -113,37 +117,45 @@ ALTER TABLE public.room_players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.room_settings ENABLE ROW LEVEL SECURITY;
 
 -- Rooms RLS: Public rooms or rooms user is in
+DROP POLICY IF EXISTS "Rooms are viewable by everyone" ON public.rooms;
 CREATE POLICY "Rooms are viewable by everyone"
     ON public.rooms FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can create rooms" ON public.rooms;
 CREATE POLICY "Authenticated users can create rooms"
     ON public.rooms FOR INSERT
     WITH CHECK (auth.uid() = host_id);
 
+DROP POLICY IF EXISTS "Hosts can update their rooms" ON public.rooms;
 CREATE POLICY "Hosts can update their rooms"
     ON public.rooms FOR UPDATE
     USING (auth.uid() = host_id);
 
+DROP POLICY IF EXISTS "Hosts can delete their rooms" ON public.rooms;
 CREATE POLICY "Hosts can delete their rooms"
     ON public.rooms FOR DELETE
     USING (auth.uid() = host_id);
 
 -- Room Players RLS
+DROP POLICY IF EXISTS "Room players viewable by everyone" ON public.room_players;
 CREATE POLICY "Room players viewable by everyone"
     ON public.room_players FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS "Users can join rooms" ON public.room_players;
 CREATE POLICY "Users can join rooms"
     ON public.room_players FOR INSERT
     WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their ready status or host can manage" ON public.room_players;
 CREATE POLICY "Users can update their ready status or host can manage"
     ON public.room_players FOR UPDATE
     USING (auth.uid() = user_id OR EXISTS (
         SELECT 1 FROM public.rooms WHERE id = room_players.room_id AND host_id = auth.uid()
     ));
 
+DROP POLICY IF EXISTS "Users can leave rooms or host can kick" ON public.room_players;
 CREATE POLICY "Users can leave rooms or host can kick"
     ON public.room_players FOR DELETE
     USING (auth.uid() = user_id OR EXISTS (
@@ -151,16 +163,19 @@ CREATE POLICY "Users can leave rooms or host can kick"
     ));
 
 -- Room Settings RLS
+DROP POLICY IF EXISTS "Room settings viewable by everyone" ON public.room_settings;
 CREATE POLICY "Room settings viewable by everyone"
     ON public.room_settings FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS "Host can insert room settings" ON public.room_settings;
 CREATE POLICY "Host can insert room settings"
     ON public.room_settings FOR INSERT
     WITH CHECK (EXISTS (
         SELECT 1 FROM public.rooms WHERE id = room_settings.room_id AND host_id = auth.uid()
     ));
 
+DROP POLICY IF EXISTS "Host can update room settings" ON public.room_settings;
 CREATE POLICY "Host can update room settings"
     ON public.room_settings FOR UPDATE
     USING (EXISTS (
@@ -214,45 +229,55 @@ ALTER TABLE public.blocked_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
 
 -- Friend requests RLS
+DROP POLICY IF EXISTS "Users can see their sent or received friend requests" ON public.friend_requests;
 CREATE POLICY "Users can see their sent or received friend requests"
     ON public.friend_requests FOR SELECT
     USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
 
+DROP POLICY IF EXISTS "Users can send friend requests" ON public.friend_requests;
 CREATE POLICY "Users can send friend requests"
     ON public.friend_requests FOR INSERT
     WITH CHECK (auth.uid() = sender_id);
 
+DROP POLICY IF EXISTS "Users can update received requests" ON public.friend_requests;
 CREATE POLICY "Users can update received requests"
     ON public.friend_requests FOR UPDATE
     USING (auth.uid() = receiver_id OR auth.uid() = sender_id);
 
+DROP POLICY IF EXISTS "Users can delete their friend requests" ON public.friend_requests;
 CREATE POLICY "Users can delete their friend requests"
     ON public.friend_requests FOR DELETE
     USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
 
 -- Friendships RLS
+DROP POLICY IF EXISTS "Users can view their friendships" ON public.friendships;
 CREATE POLICY "Users can view their friendships"
     ON public.friendships FOR SELECT
     USING (auth.uid() = user_id OR auth.uid() = friend_id);
 
+DROP POLICY IF EXISTS "Users can delete their friendships" ON public.friendships;
 CREATE POLICY "Users can delete their friendships"
     ON public.friendships FOR DELETE
     USING (auth.uid() = user_id OR auth.uid() = friend_id);
 
 -- Blocked users RLS
+DROP POLICY IF EXISTS "Users can view who they blocked" ON public.blocked_users;
 CREATE POLICY "Users can view who they blocked"
     ON public.blocked_users FOR SELECT
     USING (auth.uid() = blocker_id);
 
+DROP POLICY IF EXISTS "Users can block others" ON public.blocked_users;
 CREATE POLICY "Users can block others"
     ON public.blocked_users FOR INSERT
     WITH CHECK (auth.uid() = blocker_id);
 
+DROP POLICY IF EXISTS "Users can unblock others" ON public.blocked_users;
 CREATE POLICY "Users can unblock others"
     ON public.blocked_users FOR DELETE
     USING (auth.uid() = blocker_id);
 
 -- Reports RLS
+DROP POLICY IF EXISTS "Users can submit reports" ON public.reports;
 CREATE POLICY "Users can submit reports"
     ON public.reports FOR INSERT
     WITH CHECK (auth.uid() = reporter_id);
@@ -330,69 +355,90 @@ ALTER TABLE public.night_actions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.game_events ENABLE ROW LEVEL SECURITY;
 
+-- Security Definer helper functions to prevent RLS recursion
+CREATE OR REPLACE FUNCTION public.is_game_participant(_game_id UUID, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.game_players
+        WHERE game_id = _game_id AND user_id = _user_id
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_mafia_player(_game_id UUID, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.game_players
+        WHERE game_id = _game_id AND user_id = _user_id AND role = 'mafia'
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_game_over(_game_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.games
+        WHERE id = _game_id AND phase = 'game_over'
+    );
+$$;
+
 -- Games RLS
+DROP POLICY IF EXISTS "Games viewable by participants" ON public.games;
 CREATE POLICY "Games viewable by participants"
     ON public.games FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM public.game_players WHERE game_id = games.id AND user_id = auth.uid()
-    ));
+    USING (public.is_game_participant(id, auth.uid()));
 
--- Game Players RLS (CRITICAL SECURITY RULE from SRS: hidden roles)
--- Rule: A player can read only their own role. Mafia players can also read fellow mafia.
--- When game is over, all roles can be revealed.
+-- Game Players RLS
+DROP POLICY IF EXISTS "Players can view living status of all players in their game" ON public.game_players;
 CREATE POLICY "Players can view living status of all players in their game"
     ON public.game_players FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM public.game_players gp WHERE gp.game_id = game_players.game_id AND gp.user_id = auth.uid()
-    ));
+    USING (public.is_game_participant(game_id, auth.uid()));
 
--- Note: In production view or select policies, role column is shielded via RLS views / Edge Functions.
--- To strictly enforce at row-level:
+DROP POLICY IF EXISTS "Players can only view their own role or fellow mafia" ON public.game_players;
 CREATE POLICY "Players can only view their own role or fellow mafia"
     ON public.game_players FOR SELECT
     USING (
         auth.uid() = user_id 
-        OR (
-            role = 'mafia' AND EXISTS (
-                SELECT 1 FROM public.game_players my_gp
-                WHERE my_gp.game_id = game_players.game_id
-                AND my_gp.user_id = auth.uid()
-                AND my_gp.role = 'mafia'
-            )
-        )
-        OR EXISTS (
-            SELECT 1 FROM public.games g
-            WHERE g.id = game_players.game_id
-            AND g.phase = 'game_over'
-        )
+        OR (role = 'mafia' AND public.is_mafia_player(game_id, auth.uid()))
+        OR public.is_game_over(game_id)
     );
 
--- Night actions RLS: Actor can only see/insert their own night actions
+-- Night actions RLS
+DROP POLICY IF EXISTS "Actors can view their own night actions or fellow mafia" ON public.night_actions;
 CREATE POLICY "Actors can view their own night actions or fellow mafia"
     ON public.night_actions FOR SELECT
     USING (
         auth.uid() = actor_id
-        OR (
-            role = 'mafia' AND EXISTS (
-                SELECT 1 FROM public.game_players gp
-                WHERE gp.game_id = night_actions.game_id
-                AND gp.user_id = auth.uid()
-                AND gp.role = 'mafia'
-            )
-        )
+        OR (role = 'mafia' AND public.is_mafia_player(game_id, auth.uid()))
     );
 
+DROP POLICY IF EXISTS "Actors can insert their night action" ON public.night_actions;
 CREATE POLICY "Actors can insert their night action"
     ON public.night_actions FOR INSERT
     WITH CHECK (auth.uid() = actor_id);
 
--- Votes RLS: Public to game players during day or after voting
+-- Votes RLS
+DROP POLICY IF EXISTS "Votes viewable by game players" ON public.votes;
 CREATE POLICY "Votes viewable by game players"
     ON public.votes FOR SELECT
     USING (EXISTS (
         SELECT 1 FROM public.game_players WHERE game_id = votes.game_id AND user_id = auth.uid()
     ));
 
+DROP POLICY IF EXISTS "Living players can submit their vote" ON public.votes;
 CREATE POLICY "Living players can submit their vote"
     ON public.votes FOR INSERT
     WITH CHECK (
@@ -403,6 +449,7 @@ CREATE POLICY "Living players can submit their vote"
         )
     );
 
+DROP POLICY IF EXISTS "Living players can update their vote" ON public.votes;
 CREATE POLICY "Living players can update their vote"
     ON public.votes FOR UPDATE
     USING (
@@ -413,7 +460,8 @@ CREATE POLICY "Living players can update their vote"
         )
     );
 
--- Game Events RLS: Public to all players in that game
+-- Game Events RLS
+DROP POLICY IF EXISTS "Game events viewable by game players" ON public.game_events;
 CREATE POLICY "Game events viewable by game players"
     ON public.game_events FOR SELECT
     USING (EXISTS (
@@ -437,6 +485,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
 -- Messages RLS strictly enforcing channel permissions
+DROP POLICY IF EXISTS "Lobby channel viewable by room members" ON public.messages;
 CREATE POLICY "Lobby channel viewable by room members"
     ON public.messages FOR SELECT
     USING (
@@ -445,6 +494,7 @@ CREATE POLICY "Lobby channel viewable by room members"
         )
     );
 
+DROP POLICY IF EXISTS "Day channel viewable by game participants" ON public.messages;
 CREATE POLICY "Day channel viewable by game participants"
     ON public.messages FOR SELECT
     USING (
@@ -453,6 +503,7 @@ CREATE POLICY "Day channel viewable by game participants"
         )
     );
 
+DROP POLICY IF EXISTS "Mafia channel viewable only by mafia (alive or dead)" ON public.messages;
 CREATE POLICY "Mafia channel viewable only by mafia (alive or dead)"
     ON public.messages FOR SELECT
     USING (
@@ -464,6 +515,7 @@ CREATE POLICY "Mafia channel viewable only by mafia (alive or dead)"
         )
     );
 
+DROP POLICY IF EXISTS "Ghost channel viewable only by dead players" ON public.messages;
 CREATE POLICY "Ghost channel viewable only by dead players"
     ON public.messages FOR SELECT
     USING (
@@ -475,6 +527,7 @@ CREATE POLICY "Ghost channel viewable only by dead players"
         )
     );
 
+DROP POLICY IF EXISTS "Users can send messages to channels they are permitted" ON public.messages;
 CREATE POLICY "Users can send messages to channels they are permitted"
     ON public.messages FOR INSERT
     WITH CHECK (
@@ -515,6 +568,7 @@ CREATE TABLE IF NOT EXISTS public.user_stats (
 
 ALTER TABLE public.user_stats ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Stats are viewable by everyone" ON public.user_stats;
 CREATE POLICY "Stats are viewable by everyone"
     ON public.user_stats FOR SELECT
     USING (true);
@@ -539,7 +593,6 @@ CREATE TRIGGER on_profile_created_stats
 -- 7. REALTIME PUBLICATION
 -- =============================================================================
 
--- Add tables to realtime publication so Supabase Realtime notifies clients
 DO $$
 BEGIN
     IF NOT EXISTS (
