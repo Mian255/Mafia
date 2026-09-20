@@ -355,40 +355,65 @@ ALTER TABLE public.night_actions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.game_events ENABLE ROW LEVEL SECURITY;
 
+-- Security Definer helper functions to prevent RLS recursion
+CREATE OR REPLACE FUNCTION public.is_game_participant(_game_id UUID, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.game_players
+        WHERE game_id = _game_id AND user_id = _user_id
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_mafia_player(_game_id UUID, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.game_players
+        WHERE game_id = _game_id AND user_id = _user_id AND role = 'mafia'
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_game_over(_game_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.games
+        WHERE id = _game_id AND phase = 'game_over'
+    );
+$$;
+
 -- Games RLS
 DROP POLICY IF EXISTS "Games viewable by participants" ON public.games;
 CREATE POLICY "Games viewable by participants"
     ON public.games FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM public.game_players WHERE game_id = games.id AND user_id = auth.uid()
-    ));
+    USING (public.is_game_participant(id, auth.uid()));
 
 -- Game Players RLS
 DROP POLICY IF EXISTS "Players can view living status of all players in their game" ON public.game_players;
 CREATE POLICY "Players can view living status of all players in their game"
     ON public.game_players FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM public.game_players gp WHERE gp.game_id = game_players.game_id AND gp.user_id = auth.uid()
-    ));
+    USING (public.is_game_participant(game_id, auth.uid()));
 
 DROP POLICY IF EXISTS "Players can only view their own role or fellow mafia" ON public.game_players;
 CREATE POLICY "Players can only view their own role or fellow mafia"
     ON public.game_players FOR SELECT
     USING (
         auth.uid() = user_id 
-        OR (
-            role = 'mafia' AND EXISTS (
-                SELECT 1 FROM public.game_players my_gp
-                WHERE my_gp.game_id = game_players.game_id
-                AND my_gp.user_id = auth.uid()
-                AND my_gp.role = 'mafia'
-            )
-        )
-        OR EXISTS (
-            SELECT 1 FROM public.games g
-            WHERE g.id = game_players.game_id
-            AND g.phase = 'game_over'
-        )
+        OR (role = 'mafia' AND public.is_mafia_player(game_id, auth.uid()))
+        OR public.is_game_over(game_id)
     );
 
 -- Night actions RLS
@@ -397,14 +422,7 @@ CREATE POLICY "Actors can view their own night actions or fellow mafia"
     ON public.night_actions FOR SELECT
     USING (
         auth.uid() = actor_id
-        OR (
-            role = 'mafia' AND EXISTS (
-                SELECT 1 FROM public.game_players gp
-                WHERE gp.game_id = night_actions.game_id
-                AND gp.user_id = auth.uid()
-                AND gp.role = 'mafia'
-            )
-        )
+        OR (role = 'mafia' AND public.is_mafia_player(game_id, auth.uid()))
     );
 
 DROP POLICY IF EXISTS "Actors can insert their night action" ON public.night_actions;
