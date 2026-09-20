@@ -18,7 +18,10 @@ export async function signInWithGoogle() {
   const redirectUrl = makeRedirectUri({
     scheme: 'mafia',
     path: 'auth/callback',
+    preferLocalhost: false,
   });
+
+  console.log('[Google Auth] Redirect URI:', redirectUrl);
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
