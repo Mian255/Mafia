@@ -16,6 +16,7 @@ import {
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
+import { signInWithGoogle } from '../../lib/auth';
 
 const mafiaCharImg = require('../../../assets/mafia_transparent.png');
 const civilianCharImg = require('../../../assets/civilian_transparent.png');
@@ -38,7 +39,29 @@ export default function LoginScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    try {
+      const session = await signInWithGoogle();
+      if (session?.user) {
+        const username =
+          session.user.user_metadata?.full_name ||
+          session.user.email?.split('@')[0] ||
+          'Player';
+        if (onLoginSuccess) {
+          onLoginSuccess(username);
+        }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Google sign-in failed.';
+      Alert.alert('Google Sign-In', message);
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     const identifier = emailOrUsername.trim();
@@ -294,11 +317,52 @@ export default function LoginScreen({
               )}
             </TouchableOpacity>
 
+            {/* Google Sign-in Button */}
+            <TouchableOpacity
+              style={styles.googleButton}
+              onPress={handleGoogleLogin}
+              disabled={loading || guestLoading || googleLoading}
+              activeOpacity={0.85}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <View style={styles.googleButtonInner}>
+                  <Svg width="18" height="18" viewBox="0 0 24 24">
+                    <Path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3h3.86c2.26-2.09 3.68-5.17 3.68-9.09z"
+                    />
+                    <Path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.34 24 12 24z"
+                    />
+                    <Path
+                      fill="#FBBC05"
+                      d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.98-3.1z"
+                    />
+                    <Path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.7 1.29 6.61l3.98 3.1C6.22 6.86 8.87 4.75 12 4.75z"
+                    />
+                  </Svg>
+                  <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* Divider OR */}
+            <View style={styles.orDividerContainer}>
+              <View style={styles.orLine} />
+              <Text style={styles.orText}>OR</Text>
+              <View style={styles.orLine} />
+            </View>
+
             {/* Play as Guest Option */}
             <TouchableOpacity
               style={styles.guestButton}
               onPress={handleGuestLogin}
-              disabled={loading || guestLoading}
+              disabled={loading || guestLoading || googleLoading}
               activeOpacity={0.75}
             >
               {guestLoading ? (
@@ -558,6 +622,50 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
+  googleButton: {
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  googleButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  googleButtonText: {
+    color: '#1e293b',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  orDividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(253, 230, 138, 0.2)',
+  },
+  orText: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginHorizontal: 12,
+  },
   guestButton: {
     height: 44,
     borderRadius: 12,
@@ -566,7 +674,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(253, 230, 138, 0.25)',
     backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    marginTop: 10,
   },
   guestButtonText: {
     color: '#cbd5e1',

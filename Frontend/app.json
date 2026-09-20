@@ -2,6 +2,7 @@
   "expo": {
     "name": "Mafia",
     "slug": "mafia",
+    "scheme": "mafia",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -25,6 +26,9 @@
       "eas": {
         "projectId": "c3f3a713-cf1a-4a62-9a69-09664a8e638f"
       }
-    }
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }
