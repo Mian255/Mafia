@@ -17,6 +17,10 @@ jobs:
     defaults:
       run:
         working-directory: Frontend
+    env:
+      # Safe build-time placeholders so Expo doesn't fail on missing env in CI
+      EXPO_PUBLIC_SUPABASE_URL: "https://cfutaueuomfqkmqystkk.supabase.co"
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: "ci-build-anon-key"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,7 +63,14 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'sbxvdbuhkkytjpsofmyt' }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'cfutaueuomfqkmqystkk' }}
         run: |
-          supabase link --project-ref "$PROJECT_REF"
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN secret is not set in GitHub repository settings!"
+            exit 1
+          fi
+          # Strip accidental quotes, whitespace or newlines from secrets
+          CLEAN_PROJECT_REF=$(echo "$PROJECT_REF" | tr -d '[:space:]' | sed -e 's/^"//' -e 's/"$//')
+          export SUPABASE_DB_PASSWORD=$(echo -n "$SUPABASE_DB_PASSWORD" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+          supabase link --project-ref "$CLEAN_PROJECT_REF"
           supabase db push

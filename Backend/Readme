@@ -48,3 +48,7 @@ git push -u origin feature/<short-name>
 ```
 
 Then open a pull request into `dev`. The project owner reviews and merges it.
+
+## CI/CD Automation
+
+Automated testing (typecheck & linting) and database migration deployments run automatically on `dev` and `main` via GitHub Actions.
