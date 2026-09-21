@@ -7,3 +7,8 @@ node_modules/
 .agent-cache/
 .DS_Store
 Thumbs.db
+
+# Documentation
+Mafia SRS.docx
+*.docx
+
