@@ -51,7 +51,7 @@ export default function LoginScreen({
         onLoginSuccess(
           session.user.user_metadata?.full_name ||
             session.user.email?.split('@')[0] ||
-            'Operative'
+            'Player'
         );
       }
     } catch (err: unknown) {
@@ -76,16 +76,19 @@ export default function LoginScreen({
     setLoading(true);
     try {
       let loginEmail = identifier;
+      let matchedUsername = identifier;
+
       if (!identifier.includes('@')) {
         const { data: profile } = await supabase
           .from('profiles')
-          .select('id')
-          .eq('username', identifier)
+          .select('id, email, username')
+          .ilike('username', identifier)
           .maybeSingle();
 
-        const typedProfile = profile as { id: string } | null;
-        if (typedProfile?.id) {
-          loginEmail = `${identifier.toLowerCase()}@mafia.game`;
+        const typedProfile = profile as { id: string; email?: string | null; username?: string } | null;
+        if (typedProfile?.email) {
+          loginEmail = typedProfile.email;
+          if (typedProfile.username) matchedUsername = typedProfile.username;
         }
       }
 
@@ -95,14 +98,18 @@ export default function LoginScreen({
       });
 
       if (error) {
-        if (onLoginSuccess) {
-          onLoginSuccess(identifier);
-          return;
-        }
         Alert.alert('Login Failed', error.message);
       } else if (data?.user) {
+        if (data.user.email) {
+          Promise.resolve(
+            supabase
+              .from('profiles')
+              .update({ email: data.user.email } as never)
+              .eq('id', data.user.id)
+          ).catch(() => {});
+        }
         if (onLoginSuccess) {
-          onLoginSuccess(identifier);
+          onLoginSuccess(matchedUsername);
         }
       }
     } catch (err: unknown) {
@@ -144,7 +151,7 @@ export default function LoginScreen({
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Atmospheric Dual-Tone Noir Background */}
+      {/* Atmospheric Dual-Tone Dark Background */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <Svg width="100%" height="100%" preserveAspectRatio="none">
           <Defs>

@@ -17,11 +17,13 @@ interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
 }
 
-export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswordScreenProps) {
+export default function ForgotPasswordScreen({
+  onNavigateToLogin,
+}: ForgotPasswordScreenProps) {
   const [email, setEmail] = useState('');
-  const [isSubmitted, setIsSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
 
   // Animations
   const [fadeAnim] = useState(() => new Animated.Value(0));
@@ -59,7 +61,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
         setIsSubmitted(true);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to send recovery email.';
+      const msg = err instanceof Error ? err.message : 'Failed to send password reset email.';
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
@@ -92,11 +94,11 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
               <View style={styles.iconCircle}>
                 <Text style={styles.iconEmoji}>{isSubmitted ? '📩' : '🔐'}</Text>
               </View>
-              <Text style={styles.title}>{isSubmitted ? 'DISPATCH SENT' : 'RECOVER ACCESS'}</Text>
+              <Text style={styles.title}>{isSubmitted ? 'EMAIL SENT' : 'FORGOT PASSWORD'}</Text>
               <Text style={styles.subtitle}>
                 {isSubmitted
-                  ? `A secret recovery link has been transmitted to ${email}`
-                  : 'Enter your registered email address to receive instructions.'}
+                  ? `A password reset link has been sent to ${email}`
+                  : 'Enter your registered email address to receive password reset instructions.'}
               </Text>
             </View>
 
@@ -111,8 +113,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
               <View style={styles.successContainer}>
                 <View style={styles.tipBox}>
                   <Text style={styles.tipText}>
-                    Check your spam and encrypted channels if the email doesn&apos;t arrive in 2
-                    minutes.
+                    Check your spam folder if the email does not arrive in a few minutes.
                   </Text>
                 </View>
 
@@ -138,7 +139,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
                   <Text style={styles.inputLabel}>Registered Email</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="operative@domain.com"
+                    placeholder="user@example.com"
                     placeholderTextColor="#475569"
                     value={email}
                     onChangeText={(text) => {
@@ -158,7 +159,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
                   disabled={isLoading}
                 >
                   <Text style={styles.primaryButtonText}>
-                    {isLoading ? 'TRANSMITTING...' : 'SEND RECOVERY LINK'}
+                    {isLoading ? 'SENDING LINK...' : 'SEND RESET LINK'}
                   </Text>
                 </TouchableOpacity>
 
