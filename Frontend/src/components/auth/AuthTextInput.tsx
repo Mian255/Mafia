@@ -22,6 +22,9 @@ export interface AuthTextInputProps extends Omit<
   error?: string;
   /** Red border without inline text, e.g. when the error is shown in a banner. */
   invalid?: boolean;
+  /** Helper text shown under the field when there is no error. */
+  hint?: string;
+  hintTone?: 'muted' | 'success';
   variant?: AuthTextInputVariant;
   /** Must be a stable function (module-level or memoized). */
   renderIcon?: (focused: boolean) => React.ReactNode;
@@ -34,6 +37,8 @@ function AuthTextInputBase({
   label,
   error,
   invalid = false,
+  hint,
+  hintTone = 'muted',
   variant = 'slate',
   renderIcon,
   rightAccessory,
@@ -64,7 +69,11 @@ function AuthTextInputBase({
           />
           {rightAccessory}
         </View>
-        {error ? <Text style={gold.fieldErrorText}>{error}</Text> : null}
+        {error ? (
+          <Text style={gold.fieldErrorText}>{error}</Text>
+        ) : hint ? (
+          <Text style={[gold.hintText, hintTone === 'success' && gold.hintSuccess]}>{hint}</Text>
+        ) : null}
       </View>
     );
   }
@@ -89,7 +98,11 @@ function AuthTextInputBase({
         />
         {rightAccessory ? <View style={slate.accessory}>{rightAccessory}</View> : null}
       </View>
-      {error ? <Text style={slate.fieldErrorText}>{error}</Text> : null}
+      {error ? (
+        <Text style={slate.fieldErrorText}>{error}</Text>
+      ) : hint ? (
+        <Text style={[slate.hintText, hintTone === 'success' && slate.hintSuccess]}>{hint}</Text>
+      ) : null}
     </View>
   );
 }
@@ -149,6 +162,16 @@ const gold = StyleSheet.create({
     marginTop: 6,
     marginLeft: 4,
   },
+  hintText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    marginLeft: 4,
+  },
+  hintSuccess: {
+    color: '#4ade80',
+  },
 });
 
 const slate = StyleSheet.create({
@@ -194,5 +217,15 @@ const slate = StyleSheet.create({
     fontWeight: '600',
     marginTop: 6,
     marginLeft: 2,
+  },
+  hintText: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    marginLeft: 2,
+  },
+  hintSuccess: {
+    color: '#4ade80',
   },
 });
