@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   Image,
   KeyboardAvoidingView,
@@ -17,6 +16,7 @@ import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/auth';
+import { getDisplayName, getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
 
 const mafiaVsDetective = require('../../../assets/characters_transparent.png');
 
@@ -27,118 +27,103 @@ const CHARACTERS_HEIGHT = CHARACTERS_WIDTH / (1042 / 499);
 interface LoginScreenProps {
   onNavigateToSignUp?: () => void;
   onNavigateToForgotPassword?: () => void;
-  onLoginSuccess?: (usernameOrEmail: string) => void;
+  /** Called only after Supabase returned a valid session. */
+  onLoginSuccess?: (alias: string) => void;
 }
+
+type FieldErrors = { email?: string; password?: string };
 
 export default function LoginScreen({
   onNavigateToSignUp,
   onNavigateToForgotPassword,
   onLoginSuccess,
 }: LoginScreenProps) {
-  const [emailOrUsername, setEmailOrUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [formError, setFormError] = useState('');
 
-  const handleGoogleLogin = async () => {
-    setGoogleLoading(true);
+  const passwordInputRef = useRef<TextInput>(null);
+  // Synchronous guard so rapid double taps can't start two requests before re-render.
+  const requestInFlight = useRef(false);
+
+  const busy = loading || guestLoading || googleLoading;
+
+  const runExclusive = async (setBusy: (value: boolean) => void, task: () => Promise<void>) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    setBusy(true);
+    setFormError('');
     try {
-      const session = await signInWithGoogle();
-      if (session?.user && onLoginSuccess) {
-        onLoginSuccess(
-          session.user.user_metadata?.full_name ||
-            session.user.email?.split('@')[0] ||
-            'Operative'
-        );
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Google sign in failed.';
-      Alert.alert('Google Sign-In', message);
+      await task();
     } finally {
-      setGoogleLoading(false);
+      requestInFlight.current = false;
+      setBusy(false);
     }
   };
 
-  const handleLogin = async () => {
-    const identifier = emailOrUsername.trim();
-    if (!identifier) {
-      Alert.alert('Required', 'Please enter your username or email.');
+  const handleGoogleLogin = () =>
+    runExclusive(setGoogleLoading, async () => {
+      try {
+        const session = await signInWithGoogle();
+        // null means the user closed the browser: just stay on this screen.
+        if (session?.user) {
+          onLoginSuccess?.(getDisplayName(session.user));
+        }
+      } catch (err: unknown) {
+        setFormError(getFriendlyAuthError(err, 'Google sign-in failed. Please try again.'));
+      }
+    });
+
+  const handleLogin = () => {
+    const trimmedEmail = email.trim();
+    const errors: FieldErrors = {};
+    const emailError = validateEmail(trimmedEmail);
+    if (emailError) errors.email = emailError;
+    if (!password) errors.password = 'Please enter your password.';
+    setFieldErrors(errors);
+    if (errors.email || errors.password) {
+      setFormError('');
       return;
     }
-    if (!password) {
-      Alert.alert('Required', 'Please enter your password.');
-      return;
-    }
 
-    setLoading(true);
-    try {
-      let loginEmail = identifier;
-      if (!identifier.includes('@')) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('username', identifier)
-          .maybeSingle();
+    return runExclusive(setLoading, async () => {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: trimmedEmail,
+          password,
+        });
 
-        const typedProfile = profile as { id: string } | null;
-        if (typedProfile?.id) {
-          loginEmail = `${identifier.toLowerCase()}@mafia.game`;
-        }
-      }
-
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password,
-      });
-
-      if (error) {
-        if (onLoginSuccess) {
-          onLoginSuccess(identifier);
+        if (error || !data.session) {
+          setFormError(getFriendlyAuthError(error, 'Login failed. Please try again.'));
           return;
         }
-        Alert.alert('Login Failed', error.message);
-      } else if (data?.user) {
-        if (onLoginSuccess) {
-          onLoginSuccess(identifier);
-        }
+
+        onLoginSuccess?.(getDisplayName(data.session.user));
+      } catch (err: unknown) {
+        setFormError(getFriendlyAuthError(err));
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
-      Alert.alert('Error', message);
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
-  const handleGuestLogin = async () => {
-    setGuestLoading(true);
-    try {
-      const { data, error } = await supabase.auth.signInAnonymously();
-      if (error) {
-        if (onLoginSuccess) {
-          const guestAlias = `Guest_${Math.floor(1000 + Math.random() * 9000)}`;
-          onLoginSuccess(guestAlias);
+  const handleGuestLogin = () =>
+    runExclusive(setGuestLoading, async () => {
+      try {
+        const { data, error } = await supabase.auth.signInAnonymously();
+        if (error || !data.session) {
+          setFormError(getFriendlyAuthError(error, 'Guest login failed. Please try again.'));
           return;
         }
-        Alert.alert('Guest Login', error.message);
-      } else if (data?.user) {
-        const guestAlias = `Guest_${data.user.id.substring(0, 4).toUpperCase()}`;
-        if (onLoginSuccess) {
-          onLoginSuccess(guestAlias);
-        }
+        onLoginSuccess?.(getDisplayName(data.session.user));
+      } catch (err: unknown) {
+        setFormError(getFriendlyAuthError(err, 'Guest login failed. Please try again.'));
       }
-    } catch {
-      const guestAlias = `Guest_${Math.floor(1000 + Math.random() * 9000)}`;
-      if (onLoginSuccess) {
-        onLoginSuccess(guestAlias);
-      }
-    } finally {
-      setGuestLoading(false);
-    }
-  };
+    });
 
   return (
     <View style={styles.container}>
@@ -169,7 +154,7 @@ export default function LoginScreen({
       </View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardAvoid}
       >
         <ScrollView
@@ -195,37 +180,62 @@ export default function LoginScreen({
 
             {/* Login Box Container */}
             <View style={styles.formCard}>
-              {/* Username / Email Input */}
+              {/* Email Input */}
               <View style={styles.inputGroup}>
-                <Text style={styles.fieldLabel}>USERNAME / EMAIL</Text>
-                <View style={[styles.inputBox, focusedField === 'email' && styles.inputBoxFocused]}>
+                <Text style={styles.fieldLabel}>EMAIL</Text>
+                <View
+                  style={[
+                    styles.inputBox,
+                    focusedField === 'email' && styles.inputBoxFocused,
+                    !!fieldErrors.email && styles.inputBoxError,
+                  ]}
+                >
                   <View style={styles.iconContainer}>
                     <Svg width="20" height="20" viewBox="0 0 24 24">
                       <Path
-                        d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+                        d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
                         fill={focusedField === 'email' ? '#fbbf24' : '#fde68a'}
                       />
                     </Svg>
                   </View>
                   <TextInput
                     style={styles.textInput}
-                    value={emailOrUsername}
-                    onChangeText={setEmailOrUsername}
-                    placeholder="Enter username or email"
+                    value={email}
+                    onChangeText={(text) => {
+                      setEmail(text);
+                      if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                      if (formError) setFormError('');
+                    }}
+                    placeholder="Enter your email"
                     placeholderTextColor="#64748b"
+                    keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    autoComplete="email"
+                    textContentType="username"
+                    importantForAutofill="yes"
+                    returnKeyType="next"
+                    submitBehavior="submit"
+                    onSubmitEditing={() => passwordInputRef.current?.focus()}
+                    editable={!busy}
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
                   />
                 </View>
+                {fieldErrors.email ? (
+                  <Text style={styles.fieldErrorText}>{fieldErrors.email}</Text>
+                ) : null}
               </View>
 
               {/* Password Input */}
               <View style={styles.inputGroup}>
                 <Text style={styles.fieldLabel}>PASSWORD</Text>
                 <View
-                  style={[styles.inputBox, focusedField === 'password' && styles.inputBoxFocused]}
+                  style={[
+                    styles.inputBox,
+                    focusedField === 'password' && styles.inputBoxFocused,
+                    !!fieldErrors.password && styles.inputBoxError,
+                  ]}
                 >
                   <View style={styles.iconContainer}>
                     <Svg width="20" height="20" viewBox="0 0 24 24">
@@ -236,20 +246,36 @@ export default function LoginScreen({
                     </Svg>
                   </View>
                   <TextInput
+                    ref={passwordInputRef}
                     style={styles.textInput}
                     value={password}
-                    onChangeText={setPassword}
+                    onChangeText={(text) => {
+                      setPassword(text);
+                      if (fieldErrors.password) {
+                        setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                      }
+                      if (formError) setFormError('');
+                    }}
                     placeholder="Enter your password"
                     placeholderTextColor="#64748b"
                     secureTextEntry={!showPassword}
                     autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="current-password"
+                    textContentType="password"
+                    importantForAutofill="yes"
+                    returnKeyType="go"
+                    onSubmitEditing={handleLogin}
+                    editable={!busy}
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
                   />
                   <TouchableOpacity
-                    onPress={() => setShowPassword(!showPassword)}
+                    onPress={() => setShowPassword((prev) => !prev)}
                     style={styles.eyeButton}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
                   >
                     <Svg width="20" height="20" viewBox="0 0 24 24">
                       {showPassword ? (
@@ -266,13 +292,24 @@ export default function LoginScreen({
                     </Svg>
                   </TouchableOpacity>
                 </View>
+                {fieldErrors.password ? (
+                  <Text style={styles.fieldErrorText}>{fieldErrors.password}</Text>
+                ) : null}
               </View>
+
+              {/* Server / auth error */}
+              {formError ? (
+                <Text style={styles.formErrorText} accessibilityLiveRegion="polite">
+                  {formError}
+                </Text>
+              ) : null}
 
               {/* Primary Login Button */}
               <TouchableOpacity
-                style={styles.loginButton}
+                style={[styles.loginButton, busy && !loading && styles.buttonDisabled]}
                 onPress={handleLogin}
-                disabled={loading || guestLoading || googleLoading}
+                disabled={busy}
+                accessibilityState={{ disabled: busy, busy: loading }}
                 activeOpacity={0.85}
               >
                 <View style={styles.loginButtonBg}>
@@ -304,9 +341,10 @@ export default function LoginScreen({
 
               {/* Google Sign-in Button */}
               <TouchableOpacity
-                style={styles.googleButton}
+                style={[styles.googleButton, busy && !googleLoading && styles.buttonDisabled]}
                 onPress={handleGoogleLogin}
-                disabled={loading || guestLoading || googleLoading}
+                disabled={busy}
+                accessibilityState={{ disabled: busy, busy: googleLoading }}
                 activeOpacity={0.85}
               >
                 {googleLoading ? (
@@ -345,9 +383,10 @@ export default function LoginScreen({
 
               {/* Play as Guest Option */}
               <TouchableOpacity
-                style={styles.guestButton}
+                style={[styles.guestButton, busy && !guestLoading && styles.buttonDisabled]}
                 onPress={handleGuestLogin}
-                disabled={loading || guestLoading || googleLoading}
+                disabled={busy}
+                accessibilityState={{ disabled: busy, busy: guestLoading }}
                 activeOpacity={0.75}
               >
                 {guestLoading ? (
@@ -363,6 +402,7 @@ export default function LoginScreen({
           <View style={styles.footerContainer}>
             <TouchableOpacity
               onPress={onNavigateToForgotPassword}
+              disabled={busy}
               activeOpacity={0.7}
               style={styles.forgotTouch}
             >
@@ -371,7 +411,7 @@ export default function LoginScreen({
 
             <View style={styles.signUpGroup}>
               <Text style={styles.needAccountText}>Need an account?</Text>
-              <TouchableOpacity onPress={onNavigateToSignUp} activeOpacity={0.7}>
+              <TouchableOpacity onPress={onNavigateToSignUp} disabled={busy} activeOpacity={0.7}>
                 <Text style={styles.signUpText}>SIGN UP</Text>
               </TouchableOpacity>
             </View>
@@ -500,6 +540,26 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
+  },
+  inputBoxError: {
+    borderColor: '#ef4444',
+  },
+  fieldErrorText: {
+    color: '#f87171',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    marginLeft: 4,
+  },
+  formErrorText: {
+    color: '#f87171',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   iconContainer: {
     width: 26,
