@@ -29,6 +29,10 @@ enable_signup = true
 double_positive_signup = false
 enable_confirmations = false
 
+[auth.email.template.recovery]
+subject = "Mafia Game – Reset Your Passcode"
+content_path = "./supabase/templates/recovery.html"
+
 [auth.anonymous]
 enabled = true
 

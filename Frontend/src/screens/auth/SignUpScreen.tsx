@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -11,22 +13,72 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
+import { signInWithGoogle } from '../../lib/auth';
+import {
+  MIN_PASSWORD_LENGTH,
+  getFriendlyAuthError,
+  validateEmail,
+  validateNewPassword,
+} from '../../lib/authHelpers';
+import { AuthTextInput } from '../../components/auth/AuthTextInput';
+import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
+import { useStableCallback } from '../../hooks/useStableCallback';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
-  onSignUpSuccess?: (username: string) => void;
+  /**
+   * Called only when sign-up produced a session (email confirmation disabled, or Google).
+   * Awaited, so the button keeps its spinner while the app decides where to go next
+   * (the username is chosen on the Profile Setup screen).
+   */
+  onSignUpSuccess?: (user: User) => Promise<void> | void;
 }
 
+type FieldName = 'email' | 'password' | 'confirmPassword';
+type FieldErrors = Partial<Record<FieldName, string>>;
+
+const ShowHideToggle = memo(function ShowHideToggle({
+  visible,
+  onToggle,
+}: {
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onToggle}
+      style={styles.showToggle}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      accessibilityRole="button"
+      accessibilityLabel={visible ? 'Hide passwords' : 'Show passwords'}
+    >
+      <Text style={styles.showToggleText}>{visible ? 'HIDE' : 'SHOW'}</Text>
+    </TouchableOpacity>
+  );
+});
+
 export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: SignUpScreenProps) {
-  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null);
 
-  // Animations
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmPasswordRef = useRef<TextInput>(null);
+  // Synchronous guard so rapid double taps can't send two sign-up requests.
+  const requestInFlight = useRef(false);
+
+  // Entrance animation (native driver, runs once on mount)
   const [fadeAnim] = useState(() => new Animated.Value(0));
   const [slideAnim] = useState(() => new Animated.Value(25));
 
@@ -45,93 +97,118 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     ]).start();
   }, [fadeAnim, slideAnim]);
 
-  const handleSignUp = async () => {
-    const trimmedUsername = username.trim();
-    const trimmedEmail = email.trim().toLowerCase();
+  // Stable handlers so inputs don't re-render needlessly on typing
+  const handleEmailChange = useCallback((text: string) => {
+    setEmail(text);
+    setFieldErrors((prev) => (prev.email ? { ...prev, email: undefined } : prev));
+    setErrorMessage((prev) => (prev ? '' : prev));
+  }, []);
 
-    if (!trimmedUsername) {
-      setErrorMessage('Please choose a username.');
-      return;
-    }
-    if (trimmedUsername.length < 3) {
-      setErrorMessage('Username must be at least 3 characters.');
-      return;
-    }
-    if (trimmedUsername.length > 20) {
-      setErrorMessage('Username must be 20 characters or fewer.');
-      return;
-    }
-    if (!/^[a-zA-Z0-9_]+$/.test(trimmedUsername)) {
-      setErrorMessage('Username can only contain letters, numbers, and underscores.');
-      return;
-    }
-    if (!trimmedEmail || !trimmedEmail.includes('@')) {
-      setErrorMessage('Please enter a valid email address.');
-      return;
-    }
-    if (!password || password.length < 6) {
-      setErrorMessage('Password must be at least 6 characters.');
-      return;
-    }
-    if (password !== confirmPassword) {
-      setErrorMessage('Passwords do not match.');
-      return;
-    }
+  const handlePasswordChange = useCallback((text: string) => {
+    setPassword(text);
+    setFieldErrors((prev) =>
+      prev.password || prev.confirmPassword
+        ? { ...prev, password: undefined, confirmPassword: undefined }
+        : prev
+    );
+    setErrorMessage((prev) => (prev ? '' : prev));
+  }, []);
 
+  const handleConfirmChange = useCallback((text: string) => {
+    setConfirmPassword(text);
+    setFieldErrors((prev) => (prev.confirmPassword ? { ...prev, confirmPassword: undefined } : prev));
+    setErrorMessage((prev) => (prev ? '' : prev));
+  }, []);
+
+  const focusPassword = useCallback(() => passwordRef.current?.focus(), []);
+  const focusConfirm = useCallback(() => confirmPasswordRef.current?.focus(), []);
+  const toggleShowPassword = useCallback(() => setShowPassword((prev) => !prev), []);
+
+  const showHideToggle = useMemo(
+    () => <ShowHideToggle visible={showPassword} onToggle={toggleShowPassword} />,
+    [showPassword, toggleShowPassword]
+  );
+
+  const validate = (): FieldErrors => {
+    const errors: FieldErrors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+
+    const passwordError = validateNewPassword(password);
+    if (passwordError) errors.password = passwordError;
+
+    if (!confirmPassword) {
+      errors.confirmPassword = 'Confirm your passcode.';
+    } else if (password !== confirmPassword) {
+      errors.confirmPassword = 'Passcodes do not match.';
+    }
+    return errors;
+  };
+
+  const handleSignUp = useStableCallback(async () => {
+    if (requestInFlight.current) return;
+
+    const errors = validate();
+    setFieldErrors(errors);
     setErrorMessage('');
+    if (Object.values(errors).some(Boolean)) return;
+
+    const trimmedEmail = email.trim();
+
+    requestInFlight.current = true;
     setIsLoading(true);
 
     try {
-      // 1. Verify unique username in profiles database (case-insensitive)
-      const { data: existingUser } = await supabase
-        .from('profiles')
-        .select('id')
-        .ilike('username', trimmedUsername)
-        .maybeSingle();
-
-      if (existingUser) {
-        setErrorMessage('This username is already taken. Please choose another username.');
-        setIsLoading(false);
-        return;
-      }
-
-      // 2. Sign up user with Supabase Auth
+      // Username is chosen (and checked for availability) on the Profile Setup screen.
       const { data, error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
-        options: {
-          data: {
-            username: trimmedUsername,
-          },
-        },
       });
 
       if (error) {
-        setErrorMessage(error.message);
-      } else if (data?.user) {
-        // 3. Guarantee profiles row contains username and email
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            username: trimmedUsername,
-            email: trimmedEmail,
-            updated_at: new Date().toISOString(),
-          } as never);
-        } catch (syncErr) {
-          console.warn('Profile sync fallback:', syncErr);
-        }
-
-        if (onSignUpSuccess) {
-          onSignUpSuccess(trimmedUsername);
-        }
+        setErrorMessage(
+          getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
+        );
+      } else if (data.session) {
+        // Email confirmation is off: user is signed in right away.
+        await onSignUpSuccess?.(data.session.user);
+      } else if (data.user && data.user.identities?.length === 0) {
+        // With confirmation on, Supabase returns a user without identities for an existing email.
+        setErrorMessage('An account with this email already exists. Try logging in instead.');
+      } else {
+        // Email confirmation is on: no session until user clicks the link.
+        setConfirmationSentTo(trimmedEmail);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Registration failed.';
-      setErrorMessage(msg);
+      setErrorMessage(
+        getFriendlyAuthError(err, "We couldn't create your account. Please try again.")
+      );
     } finally {
+      requestInFlight.current = false;
       setIsLoading(false);
     }
-  };
+  });
+
+  // Google from the Sign Up screen creates the account (or signs in an existing one).
+  const handleGoogleSignUp = useStableCallback(async () => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    setGoogleLoading(true);
+    setErrorMessage('');
+    try {
+      const session = await signInWithGoogle();
+      if (session?.user) {
+        await onSignUpSuccess?.(session.user);
+      }
+    } catch (err: unknown) {
+      setErrorMessage(getFriendlyAuthError(err, "Google sign-up didn't work. Please try again."));
+    } finally {
+      requestInFlight.current = false;
+      setGoogleLoading(false);
+    }
+  });
+
+  const busy = isLoading || googleLoading;
 
   return (
     <View style={styles.container}>
@@ -144,6 +221,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           <Animated.View
             style={[
@@ -161,106 +239,134 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 <Text style={styles.badgeText}>NEW ACCOUNT</Text>
                 <View style={styles.blueDot} />
               </View>
-              <Text style={styles.title}>SIGN UP</Text>
-              <Text style={styles.subtitle}>Create your account to start playing</Text>
+              <Text style={styles.title}>
+                {confirmationSentTo ? 'CHECK YOUR EMAIL' : 'REGISTER'}
+              </Text>
+              <Text style={styles.subtitle}>
+                {confirmationSentTo
+                  ? `We sent a confirmation link to ${confirmationSentTo}. Confirm your email, then log in.`
+                  : "Create your account. You'll pick your alias next."}
+              </Text>
             </View>
 
             {/* Error Message */}
             {errorMessage ? (
               <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{errorMessage}</Text>
+                <Text style={styles.errorText} accessibilityLiveRegion="polite">
+                  {errorMessage}
+                </Text>
               </View>
             ) : null}
 
-            {/* Form */}
-            <View style={styles.form}>
-              {/* Username */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Username</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Vito or InspectorMike"
-                  placeholderTextColor="#475569"
-                  value={username}
-                  onChangeText={(text) => {
-                    setUsername(text);
-                    if (errorMessage) setErrorMessage('');
-                  }}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  maxLength={20}
-                />
+            {confirmationSentTo ? (
+              <View style={styles.form}>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={onNavigateToLogin}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.primaryButtonText}>GO TO LOGIN</Text>
+                </TouchableOpacity>
               </View>
-
-              {/* Email */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Email Address</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="name@example.com"
-                  placeholderTextColor="#475569"
+            ) : (
+              <View style={styles.form}>
+                <AuthTextInput
+                  ref={emailRef}
+                  label="Email Address"
+                  error={fieldErrors.email}
+                  placeholder="operative@domain.com"
                   value={email}
-                  onChangeText={(text) => {
-                    setEmail(text);
-                    if (errorMessage) setErrorMessage('');
-                  }}
+                  onChangeText={handleEmailChange}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="username"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={focusPassword}
+                  editable={!busy}
                 />
-              </View>
 
-              {/* Password */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Minimum 6 characters"
-                  placeholderTextColor="#475569"
+                <AuthTextInput
+                  ref={passwordRef}
+                  label="Secret Passcode"
+                  error={fieldErrors.password}
+                  rightAccessory={showHideToggle}
+                  placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
                   value={password}
-                  onChangeText={(text) => {
-                    setPassword(text);
-                    if (errorMessage) setErrorMessage('');
-                  }}
-                  secureTextEntry
+                  onChangeText={handlePasswordChange}
+                  secureTextEntry={!showPassword}
                   autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={focusConfirm}
+                  editable={!busy}
                 />
-              </View>
 
-              {/* Confirm Password */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Confirm Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Repeat password"
-                  placeholderTextColor="#475569"
+                <AuthTextInput
+                  ref={confirmPasswordRef}
+                  label="Confirm Passcode"
+                  error={fieldErrors.confirmPassword}
+                  placeholder="Repeat passcode"
                   value={confirmPassword}
-                  onChangeText={(text) => {
-                    setConfirmPassword(text);
-                    if (errorMessage) setErrorMessage('');
-                  }}
-                  secureTextEntry
+                  onChangeText={handleConfirmChange}
+                  secureTextEntry={!showPassword}
                   autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  returnKeyType="go"
+                  onSubmitEditing={handleSignUp}
+                  editable={!busy}
+                />
+
+                {/* Submit Button */}
+                <TouchableOpacity
+                  style={[styles.primaryButton, busy && styles.buttonDisabled]}
+                  onPress={handleSignUp}
+                  activeOpacity={0.85}
+                  disabled={busy}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: busy, busy: isLoading }}
+                >
+                  <View style={styles.buttonContent}>
+                    {isLoading ? (
+                      <ActivityIndicator
+                        color="#07090e"
+                        size="small"
+                        style={styles.buttonSpinner}
+                      />
+                    ) : null}
+                    <Text style={styles.primaryButtonText}>
+                      {isLoading ? 'ENROLLING...' : 'CREATE IDENTITY'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={styles.orRow}>
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>OR</Text>
+                  <View style={styles.orLine} />
+                </View>
+
+                <GoogleSignInButton
+                  label="SIGN UP WITH GOOGLE"
+                  onPress={handleGoogleSignUp}
+                  loading={googleLoading}
+                  disabled={busy}
+                  style={styles.googleButton}
                 />
               </View>
-
-              {/* Submit Button */}
-              <TouchableOpacity
-                style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
-                onPress={handleSignUp}
-                activeOpacity={0.85}
-                disabled={isLoading}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {isLoading ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+            )}
 
             {/* Footer Navigation */}
             <View style={styles.footer}>
               <Text style={styles.footerText}>Already have an account?</Text>
-              <TouchableOpacity onPress={onNavigateToLogin} activeOpacity={0.7}>
+              <TouchableOpacity onPress={onNavigateToLogin} disabled={busy} activeOpacity={0.7}>
                 <Text style={styles.loginLink}> Log In</Text>
               </TouchableOpacity>
             </View>
@@ -282,16 +388,16 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 36,
+    paddingHorizontal: Math.max(14, SCREEN_WIDTH * 0.05),
+    paddingVertical: 24,
   },
   contentCard: {
     backgroundColor: '#111622',
-    borderRadius: 24,
-    padding: 24,
+    borderRadius: 22,
+    padding: SCREEN_WIDTH < 360 ? 16 : 24,
     borderWidth: 1,
     borderColor: '#1e293b',
-    maxWidth: 440,
+    maxWidth: 420,
     width: '100%',
     alignSelf: 'center',
     shadowColor: '#000000',
@@ -302,12 +408,12 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   crimsonDot: {
     width: 6,
@@ -325,15 +431,15 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: SCREEN_WIDTH < 360 ? 10 : 11,
     fontWeight: '800',
     letterSpacing: 2.5,
   },
   title: {
     color: '#f8fafc',
-    fontSize: 32,
+    fontSize: SCREEN_WIDTH < 360 ? 26 : 30,
     fontWeight: '900',
-    letterSpacing: 3,
+    letterSpacing: 2.5,
     marginBottom: 4,
     textShadowColor: 'rgba(56, 189, 248, 0.4)',
     textShadowOffset: { width: 0, height: 2 },
@@ -341,7 +447,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: '#64748b',
-    fontSize: 13,
+    fontSize: SCREEN_WIDTH < 360 ? 11.5 : 12.5,
     fontWeight: '500',
     textAlign: 'center',
   },
@@ -350,45 +456,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e11d48',
     borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 16,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 14,
   },
   errorText: {
     color: '#ff4d6d',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     textAlign: 'center',
   },
   form: {
     width: '100%',
   },
-  inputGroup: {
-    marginBottom: 16,
+  showToggle: {
+    paddingVertical: 4,
   },
-  inputLabel: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 6,
-    letterSpacing: 0.2,
+  showToggleText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
-  input: {
-    backgroundColor: '#0a0d14',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#f8fafc',
-    fontSize: 15,
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonSpinner: {
+    marginRight: 8,
   },
   primaryButton: {
     backgroundColor: '#38bdf8',
     borderRadius: 12,
-    paddingVertical: 15,
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
     alignItems: 'center',
-    marginTop: 10,
+    justifyContent: 'center',
+    marginTop: 8,
     shadowColor: '#38bdf8',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.45,
@@ -400,23 +504,44 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#07090e',
-    fontSize: 15,
+    fontSize: SCREEN_WIDTH < 360 ? 13.5 : 14.5,
     fontWeight: '900',
     letterSpacing: 1.5,
+  },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 18,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#1e293b',
+  },
+  orText: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginHorizontal: 12,
+  },
+  googleButton: {
+    marginTop: 14,
+    borderRadius: 12,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 22,
+    marginTop: 18,
   },
   footerText: {
     color: '#94a3b8',
-    fontSize: 14,
+    fontSize: SCREEN_WIDTH < 360 ? 12.5 : 13.5,
   },
   loginLink: {
     color: '#38bdf8',
-    fontSize: 14,
+    fontSize: SCREEN_WIDTH < 360 ? 13 : 14,
     fontWeight: '700',
   },
 });
