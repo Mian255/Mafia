@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -7,13 +7,14 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
 import { getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
+import { AuthTextInput } from '../../components/auth/AuthTextInput';
+import { useStableCallback } from '../../hooks/useStableCallback';
 
 interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
@@ -47,7 +48,12 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
     ]).start();
   }, [fadeAnim, slideAnim]);
 
-  const handleSendRecovery = async () => {
+  const handleEmailChange = useCallback((text: string) => {
+    setEmail(text);
+    setErrorMessage((prev) => (prev ? '' : prev));
+  }, []);
+
+  const handleSendRecovery = useStableCallback(async () => {
     if (requestInFlight.current) return;
 
     const trimmedEmail = email.trim();
@@ -75,7 +81,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
       requestInFlight.current = false;
       setIsLoading(false);
     }
-  };
+  });
 
   return (
     <View style={styles.container}>
@@ -147,28 +153,21 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
               </View>
             ) : (
               <View style={styles.form}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Registered Email</Text>
-                  <TextInput
-                    style={[styles.input, !!errorMessage && styles.inputError]}
-                    placeholder="operative@domain.com"
-                    placeholderTextColor="#475569"
-                    value={email}
-                    onChangeText={(text) => {
-                      setEmail(text);
-                      if (errorMessage) setErrorMessage('');
-                    }}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="email"
-                    textContentType="emailAddress"
-                    importantForAutofill="yes"
-                    returnKeyType="send"
-                    onSubmitEditing={handleSendRecovery}
-                    editable={!isLoading}
-                  />
-                </View>
+                <AuthTextInput
+                  label="Registered Email"
+                  invalid={!!errorMessage}
+                  placeholder="operative@domain.com"
+                  value={email}
+                  onChangeText={handleEmailChange}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="emailAddress"
+                  returnKeyType="send"
+                  onSubmitEditing={handleSendRecovery}
+                  editable={!isLoading}
+                />
 
                 <TouchableOpacity
                   style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
@@ -288,28 +287,6 @@ const styles = StyleSheet.create({
   },
   form: {
     width: '100%',
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  inputLabel: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: '#0a0d14',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    color: '#f8fafc',
-    fontSize: 15,
-  },
-  inputError: {
-    borderColor: '#e11d48',
   },
   buttonContent: {
     flexDirection: 'row',

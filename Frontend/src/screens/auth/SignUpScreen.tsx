@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -19,6 +19,8 @@ import {
   validateEmail,
   validateNewPassword,
 } from '../../lib/authHelpers';
+import { AuthTextInput } from '../../components/auth/AuthTextInput';
+import { useStableCallback } from '../../hooks/useStableCallback';
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
@@ -28,6 +30,26 @@ interface SignUpScreenProps {
 
 type FieldName = 'alias' | 'email' | 'password' | 'confirmPassword';
 type FieldErrors = Partial<Record<FieldName, string>>;
+
+const ShowHideToggle = memo(function ShowHideToggle({
+  visible,
+  onToggle,
+}: {
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onToggle}
+      style={styles.showToggle}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      accessibilityRole="button"
+      accessibilityLabel={visible ? 'Hide passwords' : 'Show passwords'}
+    >
+      <Text style={styles.showToggleText}>{visible ? 'HIDE' : 'SHOW'}</Text>
+    </TouchableOpacity>
+  );
+});
 
 export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: SignUpScreenProps) {
   const [alias, setAlias] = useState('');
@@ -46,7 +68,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
   // Synchronous guard so rapid double taps can't send two sign-up requests.
   const requestInFlight = useRef(false);
 
-  // Animations
+  // Entrance animation (native driver, runs once on mount)
   const [fadeAnim] = useState(() => new Animated.Value(0));
   const [slideAnim] = useState(() => new Animated.Value(25));
 
@@ -65,10 +87,48 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     ]).start();
   }, [fadeAnim, slideAnim]);
 
-  const clearErrorsFor = (field: FieldName) => {
-    if (fieldErrors[field]) setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
-    if (errorMessage) setErrorMessage('');
-  };
+  // Stable handlers so each memoized field only re-renders when its own props change.
+  const clearFieldError = useCallback((field: FieldName) => {
+    setFieldErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
+    setErrorMessage((prev) => (prev ? '' : prev));
+  }, []);
+  const handleAliasChange = useCallback(
+    (text: string) => {
+      setAlias(text);
+      clearFieldError('alias');
+    },
+    [clearFieldError]
+  );
+  const handleEmailChange = useCallback(
+    (text: string) => {
+      setEmail(text);
+      clearFieldError('email');
+    },
+    [clearFieldError]
+  );
+  const handlePasswordChange = useCallback(
+    (text: string) => {
+      setPassword(text);
+      clearFieldError('password');
+    },
+    [clearFieldError]
+  );
+  const handleConfirmChange = useCallback(
+    (text: string) => {
+      setConfirmPassword(text);
+      clearFieldError('confirmPassword');
+    },
+    [clearFieldError]
+  );
+
+  const focusEmail = useCallback(() => emailRef.current?.focus(), []);
+  const focusPassword = useCallback(() => passwordRef.current?.focus(), []);
+  const focusConfirm = useCallback(() => confirmPasswordRef.current?.focus(), []);
+  const togglePassword = useCallback(() => setShowPassword((prev) => !prev), []);
+  const showHideToggle = useMemo(
+    () => <ShowHideToggle visible={showPassword} onToggle={togglePassword} />,
+    [showPassword, togglePassword]
+  );
 
   const validate = (): FieldErrors => {
     const errors: FieldErrors = {};
@@ -82,7 +142,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     return errors;
   };
 
-  const handleSignUp = async () => {
+  const handleSignUp = useStableCallback(async () => {
     if (requestInFlight.current) return;
 
     const errors = validate();
@@ -108,7 +168,9 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
       });
 
       if (error) {
-        setErrorMessage(getFriendlyAuthError(error, 'Registration failed. Please try again.'));
+        setErrorMessage(
+          getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
+        );
       } else if (data.session) {
         // Email confirmation is off: the user is signed in right away.
         onSignUpSuccess?.(trimmedAlias);
@@ -120,15 +182,14 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
         setConfirmationSentTo(trimmedEmail);
       }
     } catch (err: unknown) {
-      setErrorMessage(getFriendlyAuthError(err, 'Registration failed. Please try again.'));
+      setErrorMessage(
+        getFriendlyAuthError(err, "We couldn't create your account. Please try again.")
+      );
     } finally {
       requestInFlight.current = false;
       setIsLoading(false);
     }
-  };
-
-  const renderFieldError = (field: FieldName) =>
-    fieldErrors[field] ? <Text style={styles.fieldErrorText}>{fieldErrors[field]}</Text> : null;
+  });
 
   return (
     <View style={styles.container}>
@@ -189,124 +250,75 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
               </View>
             ) : (
               <View style={styles.form}>
-                {/* Alias */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>In-Game Alias</Text>
-                  <TextInput
-                    style={[styles.input, !!fieldErrors.alias && styles.inputError]}
-                    placeholder="e.g. ShadowVito or InspectorHolt"
-                    placeholderTextColor="#475569"
-                    value={alias}
-                    onChangeText={(text) => {
-                      setAlias(text);
-                      clearErrorsFor('alias');
-                    }}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="off"
-                    maxLength={20}
-                    returnKeyType="next"
-                    submitBehavior="submit"
-                    onSubmitEditing={() => emailRef.current?.focus()}
-                    editable={!isLoading}
-                  />
-                  {renderFieldError('alias')}
-                </View>
+                <AuthTextInput
+                  label="In-Game Alias"
+                  error={fieldErrors.alias}
+                  placeholder="e.g. ShadowVito or InspectorHolt"
+                  value={alias}
+                  onChangeText={handleAliasChange}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="off"
+                  maxLength={20}
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={focusEmail}
+                  editable={!isLoading}
+                />
 
-                {/* Email */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Email Address</Text>
-                  <TextInput
-                    ref={emailRef}
-                    style={[styles.input, !!fieldErrors.email && styles.inputError]}
-                    placeholder="operative@domain.com"
-                    placeholderTextColor="#475569"
-                    value={email}
-                    onChangeText={(text) => {
-                      setEmail(text);
-                      clearErrorsFor('email');
-                    }}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="email"
-                    textContentType="username"
-                    importantForAutofill="yes"
-                    returnKeyType="next"
-                    submitBehavior="submit"
-                    onSubmitEditing={() => passwordRef.current?.focus()}
-                    editable={!isLoading}
-                  />
-                  {renderFieldError('email')}
-                </View>
+                <AuthTextInput
+                  ref={emailRef}
+                  label="Email Address"
+                  error={fieldErrors.email}
+                  placeholder="operative@domain.com"
+                  value={email}
+                  onChangeText={handleEmailChange}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="username"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={focusPassword}
+                  editable={!isLoading}
+                />
 
-                {/* Passcode */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Secret Passcode</Text>
-                  <View style={styles.passwordRow}>
-                    <TextInput
-                      ref={passwordRef}
-                      style={[
-                        styles.input,
-                        styles.passwordInput,
-                        !!fieldErrors.password && styles.inputError,
-                      ]}
-                      placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
-                      placeholderTextColor="#475569"
-                      value={password}
-                      onChangeText={(text) => {
-                        setPassword(text);
-                        clearErrorsFor('password');
-                      }}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      autoComplete="new-password"
-                      textContentType="newPassword"
-                      importantForAutofill="yes"
-                      returnKeyType="next"
-                      submitBehavior="submit"
-                      onSubmitEditing={() => confirmPasswordRef.current?.focus()}
-                      editable={!isLoading}
-                    />
-                    <TouchableOpacity
-                      style={styles.showToggle}
-                      onPress={() => setShowPassword((prev) => !prev)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityRole="button"
-                      accessibilityLabel={showPassword ? 'Hide passwords' : 'Show passwords'}
-                    >
-                      <Text style={styles.showToggleText}>{showPassword ? 'HIDE' : 'SHOW'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {renderFieldError('password')}
-                </View>
+                <AuthTextInput
+                  ref={passwordRef}
+                  label="Secret Passcode"
+                  error={fieldErrors.password}
+                  rightAccessory={showHideToggle}
+                  placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
+                  value={password}
+                  onChangeText={handlePasswordChange}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={focusConfirm}
+                  editable={!isLoading}
+                />
 
-                {/* Confirm Passcode */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Confirm Passcode</Text>
-                  <TextInput
-                    ref={confirmPasswordRef}
-                    style={[styles.input, !!fieldErrors.confirmPassword && styles.inputError]}
-                    placeholder="Repeat passcode"
-                    placeholderTextColor="#475569"
-                    value={confirmPassword}
-                    onChangeText={(text) => {
-                      setConfirmPassword(text);
-                      clearErrorsFor('confirmPassword');
-                    }}
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="new-password"
-                    textContentType="newPassword"
-                    importantForAutofill="yes"
-                    returnKeyType="go"
-                    onSubmitEditing={handleSignUp}
-                    editable={!isLoading}
-                  />
-                  {renderFieldError('confirmPassword')}
-                </View>
+                <AuthTextInput
+                  ref={confirmPasswordRef}
+                  label="Confirm Passcode"
+                  error={fieldErrors.confirmPassword}
+                  placeholder="Repeat passcode"
+                  value={confirmPassword}
+                  onChangeText={handleConfirmChange}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  returnKeyType="go"
+                  onSubmitEditing={handleSignUp}
+                  editable={!isLoading}
+                />
 
                 {/* Submit Button */}
                 <TouchableOpacity
@@ -314,6 +326,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                   onPress={handleSignUp}
                   activeOpacity={0.85}
                   disabled={isLoading}
+                  accessibilityRole="button"
                   accessibilityState={{ disabled: isLoading, busy: isLoading }}
                 >
                   <View style={styles.buttonContent}>
@@ -442,45 +455,7 @@ const styles = StyleSheet.create({
   form: {
     width: '100%',
   },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 6,
-    letterSpacing: 0.2,
-  },
-  input: {
-    backgroundColor: '#0a0d14',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#f8fafc',
-    fontSize: 15,
-  },
-  inputError: {
-    borderColor: '#e11d48',
-  },
-  fieldErrorText: {
-    color: '#ff4d6d',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 6,
-    marginLeft: 2,
-  },
-  passwordRow: {
-    justifyContent: 'center',
-  },
-  passwordInput: {
-    paddingRight: 64,
-  },
   showToggle: {
-    position: 'absolute',
-    right: 14,
     paddingVertical: 4,
   },
   showToggleText: {

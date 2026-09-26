@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import SplashScreen from './src/screens/auth/SplashScreen';
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -76,9 +76,9 @@ export default function App() {
     }
   }, [splashFinished, initialDestination]);
 
-  const handleSplashFinish = () => {
+  const handleSplashFinish = useCallback(() => {
     setSplashFinished(true);
-  };
+  }, []);
 
   const handleAuthenticated = (alias: string) => {
     setUserAlias(alias);
@@ -95,7 +95,7 @@ export default function App() {
         <LoginScreen
           onNavigateToSignUp={() => setCurrentScreen('signup')}
           onNavigateToForgotPassword={() => setCurrentScreen('forgot-password')}
-          onLoginSuccess={handleAuthenticated}
+          onLoginSuccess={(user) => handleAuthenticated(getDisplayName(user))}
         />
       )}
 

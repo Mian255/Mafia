@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -14,9 +14,13 @@ import {
 } from 'react-native';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/auth';
-import { getDisplayName, getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
+import { getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
+import { AuthTextInput } from '../../components/auth/AuthTextInput';
+import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
+import { useStableCallback } from '../../hooks/useStableCallback';
 
 const mafiaVsDetective = require('../../../assets/characters_transparent.png');
 
@@ -24,11 +28,135 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CHARACTERS_WIDTH = Math.min(SCREEN_WIDTH * 0.74, 280);
 const CHARACTERS_HEIGHT = CHARACTERS_WIDTH / (1042 / 499);
 
+/*
+ * Performance note: everything static on this screen (full-screen SVG gradient background,
+ * title, character art, button gradient, icons) lives in memoized components below.
+ * react-native-svg rebuilds its native props on every render, so before this the whole SVG
+ * tree was re-sent to native and redrawn on every keystroke and on every focus/blur.
+ */
+
+const NoirBackground = memo(function NoirBackground() {
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0%" stopColor="#081220" />
+            <Stop offset="40%" stopColor="#060c16" />
+            <Stop offset="100%" stopColor="#04070d" />
+          </LinearGradient>
+          <LinearGradient id="ambientRed" x1="0%" y1="0%" x2="100%" y2="0%">
+            <Stop offset="0%" stopColor="#991b1b" stopOpacity="0.32" />
+            <Stop offset="45%" stopColor="#000000" stopOpacity="0" />
+          </LinearGradient>
+          <LinearGradient id="ambientBlue" x1="100%" y1="0%" x2="0%" y2="0%">
+            <Stop offset="0%" stopColor="#0284c7" stopOpacity="0.30" />
+            <Stop offset="45%" stopColor="#000000" stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#bgGrad)" />
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#ambientRed)" />
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#ambientBlue)" />
+      </Svg>
+    </View>
+  );
+});
+
+const TitleBlock = memo(function TitleBlock() {
+  return (
+    <View style={styles.titleContainer}>
+      <Text style={styles.titleText}>MAFIA</Text>
+      <View style={styles.goldDivider}>
+        <View style={styles.dividerDiamond} />
+      </View>
+      <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
+    </View>
+  );
+});
+
+const CharactersStage = memo(function CharactersStage() {
+  return (
+    <View style={styles.charactersStage} pointerEvents="none">
+      <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
+    </View>
+  );
+});
+
+const LoginButtonBackground = memo(function LoginButtonBackground() {
+  return (
+    <View style={styles.loginButtonBg} pointerEvents="none">
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id="btnGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0%" stopColor="#dc2626" />
+            <Stop offset="50%" stopColor="#991b1b" />
+            <Stop offset="100%" stopColor="#580f0f" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" rx="14" ry="14" fill="url(#btnGrad)" />
+      </Svg>
+    </View>
+  );
+});
+
+const renderEmailIcon = (focused: boolean) => (
+  <Svg width="20" height="20" viewBox="0 0 24 24">
+    <Path
+      d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
+      fill={focused ? '#fbbf24' : '#fde68a'}
+    />
+  </Svg>
+);
+
+const renderLockIcon = (focused: boolean) => (
+  <Svg width="20" height="20" viewBox="0 0 24 24">
+    <Path
+      d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+      fill={focused ? '#fbbf24' : '#fde68a'}
+    />
+  </Svg>
+);
+
+const EyeToggle = memo(function EyeToggle({
+  visible,
+  onToggle,
+}: {
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onToggle}
+      style={styles.eyeButton}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      accessibilityRole="button"
+      accessibilityLabel={visible ? 'Hide password' : 'Show password'}
+    >
+      <Svg width="20" height="20" viewBox="0 0 24 24">
+        {visible ? (
+          <Path
+            d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
+            fill="#fde68a"
+          />
+        ) : (
+          <Path
+            d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"
+            fill="#94a3b8"
+          />
+        )}
+      </Svg>
+    </TouchableOpacity>
+  );
+});
+
 interface LoginScreenProps {
   onNavigateToSignUp?: () => void;
   onNavigateToForgotPassword?: () => void;
-  /** Called only after Supabase returned a valid session. */
-  onLoginSuccess?: (alias: string) => void;
+  /**
+   * Called only after Supabase returned a valid session for an existing account.
+   * Awaited, so the button keeps its spinner while the app decides where to go next.
+   */
+  onLoginSuccess?: (user: User) => Promise<void> | void;
 }
 
 type FieldErrors = { email?: string; password?: string };
@@ -44,7 +172,6 @@ export default function LoginScreen({
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState('');
 
@@ -67,20 +194,41 @@ export default function LoginScreen({
     }
   };
 
-  const handleGoogleLogin = () =>
+  // Stable handlers (functional updates only) so the memoized inputs don't re-render needlessly.
+  const handleEmailChange = useCallback((text: string) => {
+    setEmail(text);
+    setFieldErrors((prev) => (prev.email ? { ...prev, email: undefined } : prev));
+    setFormError((prev) => (prev ? '' : prev));
+  }, []);
+
+  const handlePasswordChange = useCallback((text: string) => {
+    setPassword(text);
+    setFieldErrors((prev) => (prev.password ? { ...prev, password: undefined } : prev));
+    setFormError((prev) => (prev ? '' : prev));
+  }, []);
+
+  const focusPassword = useCallback(() => passwordInputRef.current?.focus(), []);
+  const togglePassword = useCallback(() => setShowPassword((prev) => !prev), []);
+  const eyeToggle = useMemo(
+    () => <EyeToggle visible={showPassword} onToggle={togglePassword} />,
+    [showPassword, togglePassword]
+  );
+
+  const handleGoogleLogin = useStableCallback(() =>
     runExclusive(setGoogleLoading, async () => {
       try {
         const session = await signInWithGoogle();
         // null means the user closed the browser: just stay on this screen.
         if (session?.user) {
-          onLoginSuccess?.(getDisplayName(session.user));
+          await onLoginSuccess?.(session.user);
         }
       } catch (err: unknown) {
-        setFormError(getFriendlyAuthError(err, 'Google sign-in failed. Please try again.'));
+        setFormError(getFriendlyAuthError(err, "Google sign-in didn't work. Please try again."));
       }
-    });
+    })
+  );
 
-  const handleLogin = () => {
+  const handleLogin = useStableCallback(() => {
     const trimmedEmail = email.trim();
     const errors: FieldErrors = {};
     const emailError = validateEmail(trimmedEmail);
@@ -100,58 +248,40 @@ export default function LoginScreen({
         });
 
         if (error || !data.session) {
-          setFormError(getFriendlyAuthError(error, 'Login failed. Please try again.'));
+          setFormError(getFriendlyAuthError(error, "We couldn't log you in. Please try again."));
           return;
         }
 
-        onLoginSuccess?.(getDisplayName(data.session.user));
+        await onLoginSuccess?.(data.session.user);
       } catch (err: unknown) {
         setFormError(getFriendlyAuthError(err));
       }
     });
-  };
+  });
 
-  const handleGuestLogin = () =>
+  const handleGuestLogin = useStableCallback(() =>
     runExclusive(setGuestLoading, async () => {
       try {
         const { data, error } = await supabase.auth.signInAnonymously();
         if (error || !data.session) {
-          setFormError(getFriendlyAuthError(error, 'Guest login failed. Please try again.'));
+          setFormError(
+            getFriendlyAuthError(error, "We couldn't start a guest game. Please try again.")
+          );
           return;
         }
-        onLoginSuccess?.(getDisplayName(data.session.user));
+        await onLoginSuccess?.(data.session.user);
       } catch (err: unknown) {
-        setFormError(getFriendlyAuthError(err, 'Guest login failed. Please try again.'));
+        setFormError(
+          getFriendlyAuthError(err, "We couldn't start a guest game. Please try again.")
+        );
       }
-    });
+    })
+  );
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-
-      {/* Atmospheric Dual-Tone Noir Background */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <Svg width="100%" height="100%" preserveAspectRatio="none">
-          <Defs>
-            <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0%" stopColor="#081220" />
-              <Stop offset="40%" stopColor="#060c16" />
-              <Stop offset="100%" stopColor="#04070d" />
-            </LinearGradient>
-            <LinearGradient id="ambientRed" x1="0%" y1="0%" x2="100%" y2="0%">
-              <Stop offset="0%" stopColor="#991b1b" stopOpacity="0.32" />
-              <Stop offset="45%" stopColor="#000000" stopOpacity="0" />
-            </LinearGradient>
-            <LinearGradient id="ambientBlue" x1="100%" y1="0%" x2="0%" y2="0%">
-              <Stop offset="0%" stopColor="#0284c7" stopOpacity="0.30" />
-              <Stop offset="45%" stopColor="#000000" stopOpacity="0" />
-            </LinearGradient>
-          </Defs>
-          <Rect x="0" y="0" width="100%" height="100%" fill="url(#bgGrad)" />
-          <Rect x="0" y="0" width="100%" height="100%" fill="url(#ambientRed)" />
-          <Rect x="0" y="0" width="100%" height="100%" fill="url(#ambientBlue)" />
-        </Svg>
-      </View>
+      <NoirBackground />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -161,146 +291,54 @@ export default function LoginScreen({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="none"
         >
-          {/* Header Title: MAFIA */}
-          <View style={styles.titleContainer}>
-            <Text style={styles.titleText}>MAFIA</Text>
-            <View style={styles.goldDivider}>
-              <View style={styles.dividerDiamond} />
-            </View>
-            <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
-          </View>
+          <TitleBlock />
 
           {/* Form & Characters Combined Unit */}
           <View style={styles.formWrapper}>
-            {/* Character Stage: Mafia & Detective Standing Right on Login Box */}
-            <View style={styles.charactersStage}>
-              <Image
-                source={mafiaVsDetective}
-                style={styles.charactersImage}
-                resizeMode="contain"
-              />
-            </View>
+            <CharactersStage />
 
             {/* Login Box Container */}
             <View style={styles.formCard}>
-              {/* Email Input */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.fieldLabel}>EMAIL</Text>
-                <View
-                  style={[
-                    styles.inputBox,
-                    focusedField === 'email' && styles.inputBoxFocused,
-                    !!fieldErrors.email && styles.inputBoxError,
-                  ]}
-                >
-                  <View style={styles.iconContainer}>
-                    <Svg width="20" height="20" viewBox="0 0 24 24">
-                      <Path
-                        d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
-                        fill={focusedField === 'email' ? '#fbbf24' : '#fde68a'}
-                      />
-                    </Svg>
-                  </View>
-                  <TextInput
-                    style={styles.textInput}
-                    value={email}
-                    onChangeText={(text) => {
-                      setEmail(text);
-                      if (fieldErrors.email)
-                        setFieldErrors((prev) => ({ ...prev, email: undefined }));
-                      if (formError) setFormError('');
-                    }}
-                    placeholder="Enter your email"
-                    placeholderTextColor="#64748b"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="email"
-                    textContentType="username"
-                    importantForAutofill="yes"
-                    returnKeyType="next"
-                    submitBehavior="submit"
-                    onSubmitEditing={() => passwordInputRef.current?.focus()}
-                    editable={!busy}
-                    onFocus={() => setFocusedField('email')}
-                    onBlur={() => setFocusedField(null)}
-                  />
-                </View>
-                {fieldErrors.email ? (
-                  <Text style={styles.fieldErrorText}>{fieldErrors.email}</Text>
-                ) : null}
-              </View>
+              <AuthTextInput
+                variant="gold"
+                label="EMAIL"
+                renderIcon={renderEmailIcon}
+                error={fieldErrors.email}
+                value={email}
+                onChangeText={handleEmailChange}
+                placeholder="Enter your email"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="username"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={focusPassword}
+                editable={!busy}
+              />
 
-              {/* Password Input */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.fieldLabel}>PASSWORD</Text>
-                <View
-                  style={[
-                    styles.inputBox,
-                    focusedField === 'password' && styles.inputBoxFocused,
-                    !!fieldErrors.password && styles.inputBoxError,
-                  ]}
-                >
-                  <View style={styles.iconContainer}>
-                    <Svg width="20" height="20" viewBox="0 0 24 24">
-                      <Path
-                        d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
-                        fill={focusedField === 'password' ? '#fbbf24' : '#fde68a'}
-                      />
-                    </Svg>
-                  </View>
-                  <TextInput
-                    ref={passwordInputRef}
-                    style={styles.textInput}
-                    value={password}
-                    onChangeText={(text) => {
-                      setPassword(text);
-                      if (fieldErrors.password) {
-                        setFieldErrors((prev) => ({ ...prev, password: undefined }));
-                      }
-                      if (formError) setFormError('');
-                    }}
-                    placeholder="Enter your password"
-                    placeholderTextColor="#64748b"
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="current-password"
-                    textContentType="password"
-                    importantForAutofill="yes"
-                    returnKeyType="go"
-                    onSubmitEditing={handleLogin}
-                    editable={!busy}
-                    onFocus={() => setFocusedField('password')}
-                    onBlur={() => setFocusedField(null)}
-                  />
-                  <TouchableOpacity
-                    onPress={() => setShowPassword((prev) => !prev)}
-                    style={styles.eyeButton}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    accessibilityRole="button"
-                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    <Svg width="20" height="20" viewBox="0 0 24 24">
-                      {showPassword ? (
-                        <Path
-                          d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
-                          fill="#fde68a"
-                        />
-                      ) : (
-                        <Path
-                          d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"
-                          fill="#94a3b8"
-                        />
-                      )}
-                    </Svg>
-                  </TouchableOpacity>
-                </View>
-                {fieldErrors.password ? (
-                  <Text style={styles.fieldErrorText}>{fieldErrors.password}</Text>
-                ) : null}
-              </View>
+              <AuthTextInput
+                ref={passwordInputRef}
+                variant="gold"
+                label="PASSWORD"
+                renderIcon={renderLockIcon}
+                rightAccessory={eyeToggle}
+                error={fieldErrors.password}
+                value={password}
+                onChangeText={handlePasswordChange}
+                placeholder="Enter your password"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="current-password"
+                textContentType="password"
+                returnKeyType="go"
+                onSubmitEditing={handleLogin}
+                editable={!busy}
+              />
 
               {/* Server / auth error */}
               {formError ? (
@@ -314,29 +352,11 @@ export default function LoginScreen({
                 style={[styles.loginButton, busy && !loading && styles.buttonDisabled]}
                 onPress={handleLogin}
                 disabled={busy}
+                accessibilityRole="button"
                 accessibilityState={{ disabled: busy, busy: loading }}
                 activeOpacity={0.85}
               >
-                <View style={styles.loginButtonBg}>
-                  <Svg width="100%" height="100%" preserveAspectRatio="none">
-                    <Defs>
-                      <LinearGradient id="btnGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <Stop offset="0%" stopColor="#dc2626" />
-                        <Stop offset="50%" stopColor="#991b1b" />
-                        <Stop offset="100%" stopColor="#580f0f" />
-                      </LinearGradient>
-                    </Defs>
-                    <Rect
-                      x="0"
-                      y="0"
-                      width="100%"
-                      height="100%"
-                      rx="14"
-                      ry="14"
-                      fill="url(#btnGrad)"
-                    />
-                  </Svg>
-                </View>
+                <LoginButtonBackground />
                 {loading ? (
                   <ActivityIndicator color="#fde68a" size="small" />
                 ) : (
@@ -344,40 +364,11 @@ export default function LoginScreen({
                 )}
               </TouchableOpacity>
 
-              {/* Google Sign-in Button */}
-              <TouchableOpacity
-                style={[styles.googleButton, busy && !googleLoading && styles.buttonDisabled]}
+              <GoogleSignInButton
                 onPress={handleGoogleLogin}
+                loading={googleLoading}
                 disabled={busy}
-                accessibilityState={{ disabled: busy, busy: googleLoading }}
-                activeOpacity={0.85}
-              >
-                {googleLoading ? (
-                  <ActivityIndicator color="#1e293b" size="small" />
-                ) : (
-                  <View style={styles.googleButtonInner}>
-                    <Svg width="18" height="18" viewBox="0 0 24 24">
-                      <Path
-                        fill="#4285F4"
-                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3h3.86c2.26-2.09 3.68-5.17 3.68-9.09z"
-                      />
-                      <Path
-                        fill="#34A853"
-                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.34 24 12 24z"
-                      />
-                      <Path
-                        fill="#FBBC05"
-                        d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.61H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.39l3.98-3.1z"
-                      />
-                      <Path
-                        fill="#EA4335"
-                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.7 1.29 6.61l3.98 3.1C6.22 6.86 8.87 4.75 12 4.75z"
-                      />
-                    </Svg>
-                    <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+              />
 
               {/* Divider OR */}
               <View style={styles.orDividerContainer}>
@@ -391,6 +382,7 @@ export default function LoginScreen({
                 style={[styles.guestButton, busy && !guestLoading && styles.buttonDisabled]}
                 onPress={handleGuestLogin}
                 disabled={busy}
+                accessibilityRole="button"
                 accessibilityState={{ disabled: busy, busy: guestLoading }}
                 activeOpacity={0.75}
               >
@@ -517,45 +509,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 12,
   },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  fieldLabel: {
-    color: '#cbd5e1',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 2,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-  },
-  inputBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#070d17',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: 'rgba(217, 119, 6, 0.45)',
-    height: 52,
-    paddingHorizontal: 14,
-  },
-  inputBoxFocused: {
-    borderColor: '#f59e0b',
-    backgroundColor: '#091220',
-    shadowColor: '#f59e0b',
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  inputBoxError: {
-    borderColor: '#ef4444',
-  },
-  fieldErrorText: {
-    color: '#f87171',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 6,
-    marginLeft: 4,
-  },
   formErrorText: {
     color: '#f87171',
     fontSize: 13,
@@ -565,19 +518,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
-  },
-  iconContainer: {
-    width: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  textInput: {
-    flex: 1,
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
-    paddingVertical: 0,
   },
   eyeButton: {
     padding: 6,
@@ -614,33 +554,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 3,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-  },
-  googleButton: {
-    height: 48,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000000',
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  googleButtonInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  googleButtonText: {
-    color: '#1e293b',
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 1.5,
   },
   orDividerContainer: {
     flexDirection: 'row',
