@@ -15,11 +15,11 @@ import { supabase } from '../../lib/supabase';
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
-  onSignUpSuccess?: (alias: string) => void;
+  onSignUpSuccess?: (username: string) => void;
 }
 
 export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: SignUpScreenProps) {
-  const [alias, setAlias] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -46,20 +46,35 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
   }, [fadeAnim, slideAnim]);
 
   const handleSignUp = async () => {
-    if (!alias.trim()) {
-      setErrorMessage('Please choose your in-game alias.');
+    const trimmedUsername = username.trim();
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (!trimmedUsername) {
+      setErrorMessage('Please choose a username.');
       return;
     }
-    if (!email.trim() || !email.includes('@')) {
+    if (trimmedUsername.length < 3) {
+      setErrorMessage('Username must be at least 3 characters.');
+      return;
+    }
+    if (trimmedUsername.length > 20) {
+      setErrorMessage('Username must be 20 characters or fewer.');
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmedUsername)) {
+      setErrorMessage('Username can only contain letters, numbers, and underscores.');
+      return;
+    }
+    if (!trimmedEmail || !trimmedEmail.includes('@')) {
       setErrorMessage('Please enter a valid email address.');
       return;
     }
     if (!password || password.length < 6) {
-      setErrorMessage('Passcode must be at least 6 characters.');
+      setErrorMessage('Password must be at least 6 characters.');
       return;
     }
     if (password !== confirmPassword) {
-      setErrorMessage('Passcodes do not match.');
+      setErrorMessage('Passwords do not match.');
       return;
     }
 
@@ -67,12 +82,26 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setIsLoading(true);
 
     try {
+      // 1. Verify unique username in profiles database (case-insensitive)
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('username', trimmedUsername)
+        .maybeSingle();
+
+      if (existingUser) {
+        setErrorMessage('This username is already taken. Please choose another username.');
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Sign up user with Supabase Auth
       const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: trimmedEmail,
         password,
         options: {
           data: {
-            username: alias.trim(),
+            username: trimmedUsername,
           },
         },
       });
@@ -80,8 +109,20 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
       if (error) {
         setErrorMessage(error.message);
       } else if (data?.user) {
+        // 3. Guarantee profiles row contains username and email
+        try {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            username: trimmedUsername,
+            email: trimmedEmail,
+            updated_at: new Date().toISOString(),
+          } as never);
+        } catch (syncErr) {
+          console.warn('Profile sync fallback:', syncErr);
+        }
+
         if (onSignUpSuccess) {
-          onSignUpSuccess(alias.trim());
+          onSignUpSuccess(trimmedUsername);
         }
       }
     } catch (err: unknown) {
@@ -117,11 +158,11 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
             <View style={styles.header}>
               <View style={styles.badgeRow}>
                 <View style={styles.crimsonDot} />
-                <Text style={styles.badgeText}>NEW OPERATIVE</Text>
+                <Text style={styles.badgeText}>NEW ACCOUNT</Text>
                 <View style={styles.blueDot} />
               </View>
-              <Text style={styles.title}>REGISTER</Text>
-              <Text style={styles.subtitle}>Create your alias in the underground</Text>
+              <Text style={styles.title}>SIGN UP</Text>
+              <Text style={styles.subtitle}>Create your account to start playing</Text>
             </View>
 
             {/* Error Message */}
@@ -133,19 +174,20 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
 
             {/* Form */}
             <View style={styles.form}>
-              {/* Alias */}
+              {/* Username */}
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>In-Game Alias</Text>
+                <Text style={styles.inputLabel}>Username</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. ShadowVito or InspectorHolt"
+                  placeholder="e.g. Vito or InspectorMike"
                   placeholderTextColor="#475569"
-                  value={alias}
+                  value={username}
                   onChangeText={(text) => {
-                    setAlias(text);
+                    setUsername(text);
                     if (errorMessage) setErrorMessage('');
                   }}
                   autoCapitalize="none"
+                  autoCorrect={false}
                   maxLength={20}
                 />
               </View>
@@ -155,7 +197,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 <Text style={styles.inputLabel}>Email Address</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="operative@domain.com"
+                  placeholder="name@example.com"
                   placeholderTextColor="#475569"
                   value={email}
                   onChangeText={(text) => {
@@ -168,9 +210,9 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 />
               </View>
 
-              {/* Passcode */}
+              {/* Password */}
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Secret Passcode</Text>
+                <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="Minimum 6 characters"
@@ -185,12 +227,12 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 />
               </View>
 
-              {/* Confirm Passcode */}
+              {/* Confirm Password */}
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Confirm Passcode</Text>
+                <Text style={styles.inputLabel}>Confirm Password</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="Repeat passcode"
+                  placeholder="Repeat password"
                   placeholderTextColor="#475569"
                   value={confirmPassword}
                   onChangeText={(text) => {
@@ -210,14 +252,14 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 disabled={isLoading}
               >
                 <Text style={styles.primaryButtonText}>
-                  {isLoading ? 'ENROLLING ALIAS...' : 'CREATE IDENTITY'}
+                  {isLoading ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT'}
                 </Text>
               </TouchableOpacity>
             </View>
 
             {/* Footer Navigation */}
             <View style={styles.footer}>
-              <Text style={styles.footerText}>Already have an alias?</Text>
+              <Text style={styles.footerText}>Already have an account?</Text>
               <TouchableOpacity onPress={onNavigateToLogin} activeOpacity={0.7}>
                 <Text style={styles.loginLink}> Log In</Text>
               </TouchableOpacity>

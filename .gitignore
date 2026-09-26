@@ -28,3 +28,7 @@ Thumbs.db
 Mafia SRS.docx
 *.docx
 
+
+# Supabase temp
+.temp/
+**/.temp/
