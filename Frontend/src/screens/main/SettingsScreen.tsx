@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { supabase } from '../../lib/supabase';
+import { deleteAccount } from '../../lib/auth';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 
 interface SettingsScreenProps {
@@ -887,11 +888,7 @@ export default function SettingsScreen({
                     onPress={async () => {
                       setIsDeletingAccount(true);
                       try {
-                        if (userId) {
-                          await supabase.from('profiles').delete().eq('id', userId);
-                          await supabase.from('user_stats').delete().eq('user_id', userId);
-                        }
-                        await supabase.auth.signOut();
+                        await deleteAccount();
                         setIsDeleteAccountModalOpen(false);
                         if (onLogout) onLogout();
                       } catch (err) {

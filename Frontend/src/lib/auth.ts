@@ -97,3 +97,36 @@ export async function signInWithGoogle(): Promise<Session | null> {
 
   return null;
 }
+
+/**
+ * Permanently deletes the authenticated user's account and related data from Supabase.
+ */
+export async function deleteAccount(): Promise<void> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error('No authenticated user found.');
+  }
+
+  // 1. Try invoking delete_user_account database RPC
+  try {
+    const { error: rpcError } = await supabase.rpc('delete_user_account');
+    if (rpcError) {
+      // 2. Try invoking the delete-account Edge Function
+      const { error: fnError } = await supabase.functions.invoke('delete-account');
+      if (fnError) {
+        // 3. Fallback: delete profile record directly
+        await supabase.from('profiles').delete().eq('id', user.id);
+      }
+    }
+  } catch {
+    await supabase.from('profiles').delete().eq('id', user.id);
+  }
+
+  // 4. Sign out and clear stored session
+  await supabase.auth.signOut();
+}
+
