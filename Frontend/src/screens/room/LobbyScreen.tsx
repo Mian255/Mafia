@@ -18,17 +18,20 @@ import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { supabase } from '../../lib/supabase';
 import {
+  addBotToRoom,
   fetchLobbyPlayers,
   fetchRoomSettings,
+  fetchUserFriends,
   kickPlayer,
   leaveRoom,
+  removeBotFromRoom,
   setPlayerReady,
   transferHost,
   updateRoomSettings,
 } from '../../lib/rooms';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 import { useStableCallback } from '../../hooks/useStableCallback';
-import type { LobbyPlayer, Room, RoomSettings } from '../../lib/rooms';
+import type { LobbyFriendItem, LobbyPlayer, Room, RoomSettings } from '../../lib/rooms';
 
 interface LobbyScreenProps {
   room: Room;
@@ -36,6 +39,23 @@ interface LobbyScreenProps {
   onLeave: () => void;
   onStartGame?: (roomId: string) => void;
 }
+
+const BOT_NAMES = [
+  'Bot Vito',
+  'Bot Scarlett',
+  'Bot Sherlock',
+  'Bot Dominic',
+  'Bot Luca',
+  'Bot Sonny',
+  'Bot Clemenza',
+  'Bot Isabella',
+  'Bot Frankie',
+  'Bot Vincent',
+  'Bot Watson',
+  'Bot Tessio',
+];
+
+const BOT_AVATARS: RoleId[] = ['mafia', 'detective', 'doctor', 'civilian'];
 
 export default function LobbyScreen({
   room,
@@ -50,12 +70,19 @@ export default function LobbyScreen({
   const [copied, setCopied] = useState(false);
   const [isReadying, setIsReadying] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isAddingBot, setIsAddingBot] = useState(false);
 
   // Modals state
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<LobbyPlayer | null>(null);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [isSavingRules, setIsSavingRules] = useState(false);
+
+  // Invite friends modal state
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [friendsList, setFriendsList] = useState<LobbyFriendItem[]>([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [invitedFriends, setInvitedFriends] = useState<Set<string>>(new Set());
 
   // Editable rules state for host
   const [editMafiaCount, setEditMafiaCount] = useState(1);
@@ -69,6 +96,26 @@ export default function LobbyScreen({
   const currentPlayer = players.find((p) => p.user_id === currentUserId);
   const isReady = currentPlayer?.is_ready ?? false;
 
+  // Max allowed mafia for fair game in in-lobby rules editor
+  const maxAllowedMafiaInRules = useMemo(() => {
+    const specialRoles = (editDoctorEnabled ? 1 : 0) + (editDetectiveEnabled ? 1 : 0);
+    const halfLimit = Math.floor((currentRoom.max_players - 1) / 2);
+    const roomLimit = currentRoom.max_players - specialRoles - 1;
+    return Math.max(1, Math.min(halfLimit, roomLimit));
+  }, [currentRoom.max_players, editDoctorEnabled, editDetectiveEnabled]);
+
+  const effectiveEditMafiaCount = Math.min(Math.max(1, editMafiaCount), maxAllowedMafiaInRules);
+
+  // Derived civilian count in rules modal
+  const editCivilianCount = useMemo(() => {
+    return Math.max(
+      1,
+      currentRoom.max_players -
+        effectiveEditMafiaCount -
+        (editDoctorEnabled ? 1 : 0) -
+        (editDetectiveEnabled ? 1 : 0)
+    );
+  }, [currentRoom.max_players, effectiveEditMafiaCount, editDoctorEnabled, editDetectiveEnabled]);
 
   useEffect(() => {
     let isMounted = true;
@@ -112,9 +159,9 @@ export default function LobbyScreen({
         async () => {
           const roster = await fetchLobbyPlayers(currentRoom.id);
           setPlayers(roster);
-          // Check if current user was kicked
+          // Check if current user was kicked (only for human players)
           const stillInRoom = roster.some((p) => p.user_id === currentUserId);
-          if (!stillInRoom) {
+          if (!stillInRoom && !isHost) {
             Alert.alert('Removed from Room', 'You were removed from the room by the host.');
             onLeave();
           }
@@ -177,13 +224,94 @@ export default function LobbyScreen({
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(settingsChannel);
     };
-  }, [currentRoom.id, currentUserId, onLeave, onStartGame]);
+  }, [currentRoom.id, currentUserId, isHost, onLeave, onStartGame]);
 
   const handleCopyCode = useCallback(() => {
     Clipboard.setString(currentRoom.code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [currentRoom.code]);
+
+  const handleOpenInviteModal = useStableCallback(async () => {
+    setIsInviteModalOpen(true);
+    setIsLoadingFriends(true);
+    try {
+      const friends = await fetchUserFriends();
+      setFriendsList(friends);
+    } catch {
+      setFriendsList([]);
+    } finally {
+      setIsLoadingFriends(false);
+    }
+  });
+
+  const handleInviteFriend = useStableCallback((friend: LobbyFriendItem) => {
+    const inviteMessage = `Join my Mafia game room! Room Code: ${currentRoom.code}`;
+    Clipboard.setString(inviteMessage);
+    setInvitedFriends((prev) => new Set(prev).add(friend.id));
+    Alert.alert(
+      'Invite Copied',
+      `Room invite copied to clipboard for ${friend.username}! Send it directly or in chat.`
+    );
+  });
+
+  const handleShareGeneral = useCallback(() => {
+    const inviteMessage = `Join my Mafia room! Enter Code: ${currentRoom.code}`;
+    Clipboard.setString(inviteMessage);
+    Alert.alert('Room Code Copied', `"${currentRoom.code}" copied to clipboard.`);
+  }, [currentRoom.code]);
+
+  const handleAddBot = useStableCallback(async () => {
+    if (!isHost || isAddingBot) return;
+    if (players.length >= currentRoom.max_players) {
+      Alert.alert('Room Full', `Maximum player capacity of ${currentRoom.max_players} reached.`);
+      return;
+    }
+
+    setIsAddingBot(true);
+    try {
+      // Pick next unused bot name
+      const existingNames = new Set(players.map((p) => p.username));
+      const availableName =
+        BOT_NAMES.find((name) => !existingNames.has(name)) ||
+        `Bot ${Math.floor(100 + Math.random() * 900)}`;
+
+      const randomAvatar = BOT_AVATARS[players.length % BOT_AVATARS.length];
+
+      await addBotToRoom(currentRoom.id, availableName, randomAvatar);
+      const roster = await fetchLobbyPlayers(currentRoom.id);
+      setPlayers(roster);
+    } catch (err: unknown) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add bot.');
+    } finally {
+      setIsAddingBot(false);
+    }
+  });
+
+  const handleFillBotsToMin = useStableCallback(async () => {
+    if (!isHost || isAddingBot) return;
+    const needed = Math.max(0, 4 - players.length);
+    if (needed === 0) return;
+
+    setIsAddingBot(true);
+    try {
+      for (let i = 0; i < needed; i++) {
+        const currentRoster = await fetchLobbyPlayers(currentRoom.id);
+        const existingNames = new Set(currentRoster.map((p) => p.username));
+        const availableName =
+          BOT_NAMES.find((name) => !existingNames.has(name)) ||
+          `Bot ${Math.floor(100 + Math.random() * 900)}`;
+        const randomAvatar = BOT_AVATARS[(currentRoster.length + i) % BOT_AVATARS.length];
+        await addBotToRoom(currentRoom.id, availableName, randomAvatar);
+      }
+      const updated = await fetchLobbyPlayers(currentRoom.id);
+      setPlayers(updated);
+    } catch (err: unknown) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add bots.');
+    } finally {
+      setIsAddingBot(false);
+    }
+  });
 
   const handleToggleReady = useStableCallback(async () => {
     if (isReadying) return;
@@ -212,10 +340,14 @@ export default function LobbyScreen({
   });
 
   const handleTransferHost = useStableCallback(async (target: LobbyPlayer) => {
+    if (target.is_bot || !target.user_id) {
+      Alert.alert('Invalid Action', 'Bots cannot be made room host.');
+      return;
+    }
     try {
       await transferHost(currentRoom.id, currentUserId, target.user_id);
       setSelectedPlayer(null);
-      setCurrentRoom((prev) => ({ ...prev, host_id: target.user_id }));
+      setCurrentRoom((prev) => ({ ...prev, host_id: target.user_id! }));
       setPlayers((prev) =>
         prev.map((p) => ({
           ...p,
@@ -230,9 +362,13 @@ export default function LobbyScreen({
 
   const handleKickPlayer = useStableCallback(async (target: LobbyPlayer) => {
     try {
-      await kickPlayer(currentRoom.id, target.user_id);
+      if (target.is_bot) {
+        await removeBotFromRoom(currentRoom.id, target.id);
+      } else {
+        await kickPlayer(currentRoom.id, target.user_id, target.id);
+      }
       setSelectedPlayer(null);
-      setPlayers((prev) => prev.filter((p) => p.user_id !== target.user_id));
+      setPlayers((prev) => prev.filter((p) => p.id !== target.id));
     } catch (err: unknown) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Failed to remove player.');
     }
@@ -243,7 +379,7 @@ export default function LobbyScreen({
     setIsSavingRules(true);
     try {
       const updated = await updateRoomSettings(currentRoom.id, {
-        mafia_count: editMafiaCount,
+        mafia_count: effectiveEditMafiaCount,
         doctor_enabled: editDoctorEnabled,
         detective_enabled: editDetectiveEnabled,
         night_duration_seconds: editNightDuration,
@@ -262,13 +398,13 @@ export default function LobbyScreen({
     if (!isHost || isStarting) return;
 
     if (players.length < 4) {
-      Alert.alert('Not Enough Players', 'A minimum of 4 players are required to start the game.');
+      Alert.alert('Not Enough Players', 'A minimum of 4 players are required to start the game. You can add bots to fill the lobby.');
       return;
     }
 
     const unreadyPlayers = players.filter((p) => !p.is_ready);
     if (unreadyPlayers.length > 0) {
-      Alert.alert('Waiting for Players', 'All players must be READY before starting.');
+      Alert.alert('Waiting for Players', 'All human players must be READY before starting.');
       return;
     }
 
@@ -297,13 +433,17 @@ export default function LobbyScreen({
   );
 
   const renderPlayerItem = ({ item }: { item: LobbyPlayer }) => {
-    const avatarKey = item.avatar_url as RoleId;
+    const avatarKey = (item.avatar_url as RoleId) || 'civilian';
     const hasImage = avatarKey && CHARACTER_IMAGES[avatarKey];
     const isMe = item.user_id === currentUserId;
 
     return (
       <TouchableOpacity
-        style={[styles.playerCard, isMe && styles.playerCardMe]}
+        style={[
+          styles.playerCard,
+          isMe && styles.playerCardMe,
+          item.is_bot && styles.playerCardBot,
+        ]}
         onPress={() => {
           if (isHost && !isMe) {
             setSelectedPlayer(item);
@@ -314,7 +454,11 @@ export default function LobbyScreen({
         {/* Avatar */}
         <View style={styles.avatarContainer}>
           {hasImage ? (
-            <Image source={CHARACTER_IMAGES[avatarKey]} style={styles.avatarImg} resizeMode="cover" />
+            <Image
+              source={CHARACTER_IMAGES[avatarKey]}
+              style={styles.avatarImg}
+              resizeMode="cover"
+            />
           ) : (
             <View style={styles.avatarFallback}>
               <Text style={styles.avatarInitial}>
@@ -327,6 +471,11 @@ export default function LobbyScreen({
               <Text style={styles.crownText}>👑</Text>
             </View>
           ) : null}
+          {item.is_bot ? (
+            <View style={styles.botBadge}>
+              <Text style={styles.botBadgeText}>🤖</Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Info */}
@@ -336,14 +485,19 @@ export default function LobbyScreen({
               {item.username}
             </Text>
             {isMe ? <Text style={styles.youTag}>YOU</Text> : null}
+            {item.is_bot ? <Text style={styles.botTag}>BOT</Text> : null}
           </View>
-          <Text style={styles.playerRoleText}>{item.is_host ? 'Host' : 'Player'}</Text>
+          <Text style={styles.playerRoleText}>
+            {item.is_host ? 'Host' : item.is_bot ? 'AI Player' : 'Player'}
+          </Text>
         </View>
 
         {/* Host action hint / Ready badge */}
         {isHost && !isMe ? (
           <View style={styles.managePill}>
-            <Text style={styles.managePillText}>MANAGE ▾</Text>
+            <Text style={styles.managePillText}>
+              {item.is_bot ? 'REMOVE ✕' : 'MANAGE ▾'}
+            </Text>
           </View>
         ) : (
           <View
@@ -380,9 +534,27 @@ export default function LobbyScreen({
           accessibilityLabel="Leave room"
         >
           <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-            <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="#f43f5e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            <Path d="M16 17l5-5-5-5" stroke="#f43f5e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            <Path d="M21 12H9" stroke="#f43f5e" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+            <Path
+              d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+              stroke="#f43f5e"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <Path
+              d="M16 17l5-5-5-5"
+              stroke="#f43f5e"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <Path
+              d="M21 12H9"
+              stroke="#f43f5e"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </Svg>
         </TouchableOpacity>
 
@@ -401,7 +573,13 @@ export default function LobbyScreen({
           >
             <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
               <Circle cx="12" cy="12" r="3" stroke="#94a3b8" strokeWidth={2} />
-              <Path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="#94a3b8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              <Path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                stroke="#94a3b8"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </Svg>
           </TouchableOpacity>
         ) : (
@@ -424,10 +602,48 @@ export default function LobbyScreen({
           <Text style={styles.rosterCountText}>
             PLAYERS: {players.length} / {currentRoom.max_players}
           </Text>
-          <Text style={styles.minReqText}>
-            {players.length < 4 ? `(Need ${4 - players.length} more players)` : 'Ready to Start'}
+          <Text style={[styles.minReqText, players.length >= 4 && styles.minReqTextSuccess]}>
+            {players.length < 4
+              ? `(Need ${4 - players.length} more players)`
+              : 'Minimum Met (Ready to Start)'}
           </Text>
         </View>
+      </View>
+
+      {/* Action Bar: Invite Friends & Add Bots */}
+      <View style={styles.lobbyActionsRow}>
+        <TouchableOpacity
+          style={styles.lobbyActionBtn}
+          onPress={handleOpenInviteModal}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.lobbyActionBtnText}>👥 INVITE FRIENDS</Text>
+        </TouchableOpacity>
+
+        {isHost && players.length < currentRoom.max_players ? (
+          <TouchableOpacity
+            style={[styles.lobbyActionBtn, styles.lobbyActionBtnBot]}
+            onPress={handleAddBot}
+            disabled={isAddingBot}
+            activeOpacity={0.8}
+          >
+            {isAddingBot ? (
+              <ActivityIndicator color="#38bdf8" size="small" style={{ marginRight: 4 }} />
+            ) : null}
+            <Text style={[styles.lobbyActionBtnText, { color: '#38bdf8' }]}>+ ADD BOT 🤖</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {isHost && players.length < 4 ? (
+          <TouchableOpacity
+            style={[styles.lobbyActionBtn, styles.lobbyActionBtnFill]}
+            onPress={handleFillBotsToMin}
+            disabled={isAddingBot}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.lobbyActionBtnText, { color: '#f59e0b' }]}>⚡ AUTO-FILL (4)</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Game Rules Summary Pill (Tapping opens rules) */}
@@ -440,7 +656,9 @@ export default function LobbyScreen({
           activeOpacity={isHost ? 0.7 : 1}
         >
           <Text style={styles.rulesSummaryText}>
-            🎭 {settings.mafia_count} Mafia • 🔍 {settings.detective_enabled ? 'Detective' : 'No Detective'} • 💉 {settings.doctor_enabled ? 'Doctor' : 'No Doctor'}
+            🎭 {settings.mafia_count} Mafia • 🔍{' '}
+            {settings.detective_enabled ? 'Detective' : 'No Detective'} • 💉{' '}
+            {settings.doctor_enabled ? 'Doctor' : 'No Doctor'}
           </Text>
           {isHost ? <Text style={styles.rulesEditText}>EDIT RULES ⚙️</Text> : null}
         </TouchableOpacity>
@@ -448,7 +666,14 @@ export default function LobbyScreen({
 
       {/* Players List */}
       <View style={styles.rosterContainer}>
-        <Text style={styles.rosterSectionTitle}>PLAYERS</Text>
+        <View style={styles.rosterHeaderRow}>
+          <Text style={styles.rosterSectionTitle}>PLAYERS IN ROOM ({players.length})</Text>
+          {players.some((p) => p.is_bot) ? (
+            <Text style={styles.botCountSubtitle}>
+              {players.filter((p) => p.is_bot).length} Bots active
+            </Text>
+          ) : null}
+        </View>
 
         {isLoading ? (
           <View style={styles.centerBox}>
@@ -538,23 +763,27 @@ export default function LobbyScreen({
         </TouchableWithoutFeedback>
       </Modal>
 
-      {/* MODAL 2: Host Controls for Selected Player */}
+      {/* MODAL 2: Host Controls for Selected Player / Bot */}
       <Modal visible={!!selectedPlayer} transparent animationType="fade">
         <TouchableWithoutFeedback onPress={() => setSelectedPlayer(null)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback>
               <View style={styles.modalCard}>
                 <Text style={styles.modalTitle}>{selectedPlayer?.username}</Text>
-                <Text style={styles.modalSub}>Host Controls for this player</Text>
+                <Text style={styles.modalSub}>
+                  {selectedPlayer?.is_bot ? 'AI Bot Player' : 'Player Management'}
+                </Text>
 
-                <TouchableOpacity
-                  style={styles.actionRowBtn}
-                  onPress={() => selectedPlayer && handleTransferHost(selectedPlayer)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.actionRowBtnEmoji}>👑</Text>
-                  <Text style={styles.actionRowBtnText}>Make Host</Text>
-                </TouchableOpacity>
+                {!selectedPlayer?.is_bot && (
+                  <TouchableOpacity
+                    style={styles.actionRowBtn}
+                    onPress={() => selectedPlayer && handleTransferHost(selectedPlayer)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.actionRowBtnEmoji}>👑</Text>
+                    <Text style={styles.actionRowBtnText}>Make Host</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   style={[styles.actionRowBtn, styles.actionRowDanger]}
@@ -563,7 +792,7 @@ export default function LobbyScreen({
                 >
                   <Text style={styles.actionRowBtnEmoji}>🚫</Text>
                   <Text style={[styles.actionRowBtnText, { color: '#f43f5e' }]}>
-                    Remove from Room
+                    {selectedPlayer?.is_bot ? 'Remove Bot from Room' : 'Remove from Room'}
                   </Text>
                 </TouchableOpacity>
 
@@ -580,37 +809,176 @@ export default function LobbyScreen({
         </TouchableWithoutFeedback>
       </Modal>
 
-      {/* MODAL 3: Host Edit Game Rules */}
+      {/* MODAL 3: Invite Friends Modal */}
+      <Modal visible={isInviteModalOpen} transparent animationType="slide">
+        <TouchableWithoutFeedback onPress={() => setIsInviteModalOpen(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.modalCard, styles.inviteModalCard]}>
+                <Text style={styles.modalTitle}>Invite Friends</Text>
+                <Text style={styles.modalSub}>Share Room Code with your friends</Text>
+
+                {/* Quick Code Share Banner */}
+                <View style={styles.inviteCodeBox}>
+                  <View>
+                    <Text style={styles.inviteCodeLabel}>ROOM CODE</Text>
+                    <Text style={styles.inviteCodeVal}>{currentRoom.code}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.inviteShareBtn}
+                    onPress={handleShareGeneral}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.inviteShareBtnText}>COPY LINK 📋</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Friends List */}
+                <Text style={styles.friendsSectionHeader}>YOUR FRIENDS</Text>
+                {isLoadingFriends ? (
+                  <View style={{ paddingVertical: 20 }}>
+                    <ActivityIndicator color="#38bdf8" />
+                  </View>
+                ) : friendsList.length === 0 ? (
+                  <View style={styles.emptyFriendsBox}>
+                    <Text style={styles.emptyFriendsText}>
+                      No friends found yet. Share your Room Code directly to invite players!
+                    </Text>
+                  </View>
+                ) : (
+                  <ScrollView style={styles.friendsScrollView} showsVerticalScrollIndicator={false}>
+                    {friendsList.map((f) => {
+                      const isInvited = invitedFriends.has(f.id);
+                      return (
+                        <View key={f.id} style={styles.friendRow}>
+                          <View style={styles.friendInfo}>
+                            <View style={styles.friendAvatar}>
+                              <Text style={styles.friendAvatarInitial}>
+                                {f.username.charAt(0).toUpperCase()}
+                              </Text>
+                            </View>
+                            <Text style={styles.friendName} numberOfLines={1}>
+                              {f.username}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[styles.friendInviteBtn, isInvited && styles.friendInvitedBtn]}
+                            onPress={() => handleInviteFriend(f)}
+                            activeOpacity={0.8}
+                          >
+                            <Text
+                              style={[
+                                styles.friendInviteBtnText,
+                                isInvited && styles.friendInvitedBtnText,
+                              ]}
+                            >
+                              {isInvited ? 'INVITED ✓' : 'INVITE'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+
+                <TouchableOpacity
+                  style={styles.modalCancelBtnFull}
+                  onPress={() => setIsInviteModalOpen(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.modalCancelText}>DONE</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* MODAL 4: Host Edit Game Rules & Role Customization */}
       <Modal visible={isRulesModalOpen} transparent animationType="slide">
         <TouchableWithoutFeedback onPress={() => setIsRulesModalOpen(false)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback>
               <View style={[styles.modalCard, styles.rulesModalCard]}>
                 <Text style={styles.modalTitle}>Game Rules & Roles</Text>
-                <Text style={styles.modalSub}>Configure settings for this room</Text>
+                <Text style={styles.modalSub}>
+                  Room Capacity: {currentRoom.max_players} Players
+                </Text>
 
                 <ScrollView style={styles.rulesScrollView} showsVerticalScrollIndicator={false}>
-                  {/* Mafia Count */}
+                  {/* Fair Role Distribution Summary */}
+                  <View style={styles.ruleSummaryGrid}>
+                    <View style={[styles.rulePill, { borderColor: '#e11d48' }]}>
+                      <Text style={[styles.rulePillCount, { color: '#e11d48' }]}>
+                        {effectiveEditMafiaCount}
+                      </Text>
+                      <Text style={styles.rulePillName}>Mafia</Text>
+                    </View>
+
+                    <View style={[styles.rulePill, { borderColor: '#0ea5e9' }]}>
+                      <Text style={[styles.rulePillCount, { color: '#0ea5e9' }]}>
+                        {editDetectiveEnabled ? 1 : 0}
+                      </Text>
+                      <Text style={styles.rulePillName}>Detective</Text>
+                    </View>
+
+                    <View style={[styles.rulePill, { borderColor: '#10b981' }]}>
+                      <Text style={[styles.rulePillCount, { color: '#10b981' }]}>
+                        {editDoctorEnabled ? 1 : 0}
+                      </Text>
+                      <Text style={styles.rulePillName}>Doctor</Text>
+                    </View>
+
+                    <View style={[styles.rulePill, { borderColor: '#94a3b8' }]}>
+                      <Text style={[styles.rulePillCount, { color: '#94a3b8' }]}>
+                        {editCivilianCount}
+                      </Text>
+                      <Text style={styles.rulePillName}>Civilians</Text>
+                    </View>
+                  </View>
+
+                  {/* Mafia Stepper */}
                   <View style={styles.ruleBlock}>
-                    <Text style={styles.ruleLabel}>Mafia Count: {editMafiaCount}</Text>
-                    <View style={styles.timerSelector}>
-                      {[1, 2, 3, 4].map((n) => (
-                        <TouchableOpacity
-                          key={n}
-                          style={[styles.timePill, editMafiaCount === n && styles.timePillActive]}
-                          onPress={() => setEditMafiaCount(n)}
-                        >
-                          <Text style={[styles.timePillText, editMafiaCount === n && styles.timePillTextActive]}>
-                            {n} Mafia
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
+                    <View style={styles.ruleBlockHeader}>
+                      <Text style={styles.ruleLabel}>Mafia Count: {effectiveEditMafiaCount}</Text>
+                      <Text style={styles.ruleCapNote}>Max: {maxAllowedMafiaInRules}</Text>
+                    </View>
+
+                    <View style={styles.stepperContainer}>
+                      <TouchableOpacity
+                        style={[styles.stepperSubBtn, effectiveEditMafiaCount <= 1 && styles.stepperDisabled]}
+                        onPress={() => setEditMafiaCount((prev) => Math.max(1, prev - 1))}
+                        disabled={effectiveEditMafiaCount <= 1}
+                      >
+                        <Text style={styles.stepperSubBtnText}>-</Text>
+                      </TouchableOpacity>
+
+                      <Text style={styles.stepperSubValue}>{effectiveEditMafiaCount} Mafia</Text>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.stepperSubBtn,
+                          effectiveEditMafiaCount >= maxAllowedMafiaInRules && styles.stepperDisabled,
+                        ]}
+                        onPress={() =>
+                          setEditMafiaCount((prev) =>
+                            Math.min(maxAllowedMafiaInRules, prev + 1)
+                          )
+                        }
+                        disabled={effectiveEditMafiaCount >= maxAllowedMafiaInRules}
+                      >
+                        <Text style={styles.stepperSubBtnText}>+</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
 
                   {/* Doctor Role */}
                   <View style={styles.ruleSwitchRow}>
-                    <Text style={styles.ruleSwitchLabel}>Enable Doctor Role</Text>
+                    <View>
+                      <Text style={styles.ruleSwitchLabel}>Doctor Role</Text>
+                      <Text style={styles.ruleSwitchSub}>Protects innocent player</Text>
+                    </View>
                     <Switch
                       value={editDoctorEnabled}
                       onValueChange={setEditDoctorEnabled}
@@ -621,7 +989,10 @@ export default function LobbyScreen({
 
                   {/* Detective Role */}
                   <View style={styles.ruleSwitchRow}>
-                    <Text style={styles.ruleSwitchLabel}>Enable Detective Role</Text>
+                    <View>
+                      <Text style={styles.ruleSwitchLabel}>Detective Role</Text>
+                      <Text style={styles.ruleSwitchSub}>Investigates nightly suspect</Text>
+                    </View>
                     <Switch
                       value={editDetectiveEnabled}
                       onValueChange={setEditDetectiveEnabled}
@@ -637,10 +1008,18 @@ export default function LobbyScreen({
                       {[60, 90, 120].map((t) => (
                         <TouchableOpacity
                           key={t}
-                          style={[styles.timePill, editDayDuration === t && styles.timePillActive]}
+                          style={[
+                            styles.timePill,
+                            editDayDuration === t && styles.timePillActive,
+                          ]}
                           onPress={() => setEditDayDuration(t)}
                         >
-                          <Text style={[styles.timePillText, editDayDuration === t && styles.timePillTextActive]}>
+                          <Text
+                            style={[
+                              styles.timePillText,
+                              editDayDuration === t && styles.timePillTextActive,
+                            ]}
+                          >
                             {t}s
                           </Text>
                         </TouchableOpacity>
@@ -654,10 +1033,18 @@ export default function LobbyScreen({
                       {[20, 30, 45].map((t) => (
                         <TouchableOpacity
                           key={t}
-                          style={[styles.timePill, editNightDuration === t && styles.timePillActive]}
+                          style={[
+                            styles.timePill,
+                            editNightDuration === t && styles.timePillActive,
+                          ]}
                           onPress={() => setEditNightDuration(t)}
                         >
-                          <Text style={[styles.timePillText, editNightDuration === t && styles.timePillTextActive]}>
+                          <Text
+                            style={[
+                              styles.timePillText,
+                              editNightDuration === t && styles.timePillTextActive,
+                            ]}
+                          >
                             {t}s
                           </Text>
                         </TouchableOpacity>
@@ -748,7 +1135,8 @@ const styles = StyleSheet.create({
   },
   codeCard: {
     backgroundColor: '#0f172a',
-    margin: 20,
+    marginHorizontal: 20,
+    marginTop: 16,
     marginBottom: 8,
     borderRadius: 16,
     padding: 16,
@@ -761,7 +1149,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     width: '100%',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   codeLabel: {
     fontSize: 11,
@@ -781,7 +1169,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   roomCodeDisplay: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '900',
     color: '#f8fafc',
     letterSpacing: 8,
@@ -791,7 +1179,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginTop: 8,
+    marginTop: 6,
     borderTopWidth: 1,
     borderTopColor: '#1e293b',
     paddingTop: 8,
@@ -806,10 +1194,45 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  minReqTextSuccess: {
+    color: '#10b981',
+  },
+  lobbyActionsRow: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginBottom: 8,
+    gap: 8,
+  },
+  lobbyActionBtn: {
+    flex: 1,
+    backgroundColor: '#1e293b',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  lobbyActionBtnBot: {
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+  },
+  lobbyActionBtnFill: {
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+    flex: 0.9,
+  },
+  lobbyActionBtnText: {
+    color: '#f8fafc',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   rulesSummaryBar: {
     backgroundColor: '#0c1017',
     marginHorizontal: 20,
-    marginBottom: 10,
+    marginBottom: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
@@ -835,12 +1258,22 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
   },
+  rosterHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 8,
+  },
   rosterSectionTitle: {
     fontSize: 12,
     fontWeight: '800',
     color: '#94a3b8',
     letterSpacing: 1,
-    marginVertical: 10,
+  },
+  botCountSubtitle: {
+    fontSize: 11,
+    color: '#38bdf8',
+    fontWeight: '700',
   },
   listContent: {
     paddingBottom: 20,
@@ -858,6 +1291,9 @@ const styles = StyleSheet.create({
   playerCardMe: {
     borderColor: '#38bdf8',
     backgroundColor: '#101c36',
+  },
+  playerCardBot: {
+    borderColor: '#334155',
   },
   avatarContainer: {
     position: 'relative',
@@ -896,6 +1332,20 @@ const styles = StyleSheet.create({
   crownText: {
     fontSize: 11,
   },
+  botBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    backgroundColor: '#0c1017',
+    borderRadius: 8,
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  botBadgeText: {
+    fontSize: 10,
+  },
   playerInfo: {
     flex: 1,
   },
@@ -916,6 +1366,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     paddingHorizontal: 6,
     paddingVertical: 2,
+    borderRadius: 4,
+  },
+  botTag: {
+    backgroundColor: '#334155',
+    color: '#38bdf8',
+    fontSize: 9,
+    fontWeight: '900',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
     borderRadius: 4,
   },
   playerRoleText: {
@@ -1030,6 +1489,9 @@ const styles = StyleSheet.create({
     borderColor: '#1e293b',
   },
   rulesModalCard: {
+    maxHeight: '85%',
+  },
+  inviteModalCard: {
     maxHeight: '80%',
   },
   modalTitle: {
@@ -1064,6 +1526,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginRight: 8,
     alignItems: 'center',
+  },
+  modalCancelBtnFull: {
+    backgroundColor: '#1e293b',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 12,
   },
   modalCancelText: {
     color: '#94a3b8',
@@ -1118,17 +1587,82 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   rulesScrollView: {
-    maxHeight: 300,
+    maxHeight: 340,
     marginVertical: 6,
+  },
+  ruleSummaryGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  rulePill: {
+    flex: 1,
+    backgroundColor: '#07090e',
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 8,
+    marginHorizontal: 2,
+    alignItems: 'center',
+  },
+  rulePillCount: {
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  rulePillName: {
+    fontSize: 10,
+    color: '#94a3b8',
+    fontWeight: '700',
+    marginTop: 2,
   },
   ruleBlock: {
     marginBottom: 14,
+  },
+  ruleBlockHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   ruleLabel: {
     color: '#cbd5e1',
     fontSize: 13,
     fontWeight: '700',
-    marginBottom: 8,
+  },
+  ruleCapNote: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#07090e',
+    borderRadius: 10,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  stepperSubBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperSubBtnText: {
+    color: '#f8fafc',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  stepperSubValue: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  stepperDisabled: {
+    opacity: 0.3,
   },
   ruleSwitchRow: {
     flexDirection: 'row',
@@ -1143,9 +1677,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  ruleSwitchSub: {
+    color: '#64748b',
+    fontSize: 11,
+    marginTop: 2,
+  },
   timerSelector: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 6,
   },
   timePill: {
     flex: 1,
@@ -1164,6 +1704,113 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   timePillTextActive: {
+    color: '#ffffff',
+  },
+  inviteCodeBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#07090e',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    marginBottom: 14,
+  },
+  inviteCodeLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94a3b8',
+    letterSpacing: 1,
+  },
+  inviteCodeVal: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#f8fafc',
+    letterSpacing: 3,
+  },
+  inviteShareBtn: {
+    backgroundColor: '#38bdf8',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  inviteShareBtnText: {
+    color: '#07090e',
+    fontWeight: '900',
+    fontSize: 11,
+  },
+  friendsSectionHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94a3b8',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  emptyFriendsBox: {
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    backgroundColor: '#07090e',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  emptyFriendsText: {
+    color: '#64748b',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  friendsScrollView: {
+    maxHeight: 200,
+  },
+  friendRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  friendInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    paddingRight: 8,
+  },
+  friendAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  friendAvatarInitial: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  friendName: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  friendInviteBtn: {
+    backgroundColor: '#e11d48',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  friendInvitedBtn: {
+    backgroundColor: '#10b981',
+  },
+  friendInviteBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  friendInvitedBtnText: {
     color: '#ffffff',
   },
 });
