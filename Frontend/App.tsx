@@ -14,7 +14,7 @@ import LobbyScreen from './src/screens/room/LobbyScreen';
 import { supabase } from './src/lib/supabase';
 import { createSessionFromUrl } from './src/lib/auth';
 import { getDisplayName } from './src/lib/authHelpers';
-import { getUsernameStatus } from './src/lib/profile';
+import { getUsernameStatus, isPlaceholderUsername } from './src/lib/profile';
 import type { Room } from './src/lib/rooms';
 
 type ScreenState =
@@ -52,14 +52,30 @@ export default function App() {
    */
   const resolveSignedInDestination = useCallback(async (user: User): Promise<ScreenState> => {
     setCurrentUser(user);
-    if (user.user_metadata?.username) {
-      setUserAlias(user.user_metadata.username);
+
+    // 1. If user already has a valid chosen username in session metadata, go straight to home
+    const metaUsername = user.user_metadata?.username;
+    if (metaUsername && !isPlaceholderUsername(metaUsername)) {
+      setUserAlias(metaUsername);
       return 'home';
     }
 
+    // 2. Look up username in profiles database
     const status = await getUsernameStatus(user);
-    if (status.needsSetup) return 'profile-setup';
-    setUserAlias(status.username ?? getDisplayName(user));
+    if (status.needsSetup) {
+      return 'profile-setup';
+    }
+
+    const chosenName = status.username ?? getDisplayName(user);
+    setUserAlias(chosenName);
+
+    // 3. Cache to auth metadata so future launches load instantly
+    try {
+      supabase.auth.updateUser({ data: { username: chosenName, username_set: true } });
+    } catch {
+      // ignore
+    }
+
     return 'home';
   }, []);
 
