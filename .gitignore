@@ -11,6 +11,10 @@ node_modules/
 **/supabase/.env
 *secret*.json
 *credentials*.json
+*CREDENTIALS*
+*credentials*
+CREDENTIALS.md
+credentials.md
 
 
 # Logs
