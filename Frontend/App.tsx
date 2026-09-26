@@ -1,23 +1,39 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import type { User } from '@supabase/supabase-js';
 import SplashScreen from './src/screens/auth/SplashScreen';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import SignUpScreen from './src/screens/auth/SignUpScreen';
 import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
+import ProfileSetupScreen from './src/screens/auth/ProfileSetupScreen';
 import HomeScreen from './src/screens/main/HomeScreen';
 import { supabase } from './src/lib/supabase';
 import { getDisplayName } from './src/lib/authHelpers';
+import { getUsernameStatus } from './src/lib/profile';
 
-type ScreenState = 'splash' | 'login' | 'signup' | 'forgot-password' | 'home';
+type ScreenState = 'splash' | 'login' | 'signup' | 'forgot-password' | 'profile-setup' | 'home';
 
 /** Screens that require a signed-in user. Losing the session on one of these returns to Login. */
-const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>(['home']);
+const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>(['profile-setup', 'home']);
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenState>('splash');
   const [userAlias, setUserAlias] = useState('Agent');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [initialDestination, setInitialDestination] = useState<ScreenState | null>(null);
   const [splashFinished, setSplashFinished] = useState(false);
+
+  /**
+   * Decides where a signed-in user goes: Profile Setup until they have chosen a username,
+   * Home afterwards. Guests (anonymous) always go straight Home.
+   */
+  const resolveSignedInDestination = useCallback(async (user: User): Promise<ScreenState> => {
+    const status = await getUsernameStatus(user);
+    setCurrentUser(user);
+    if (status.needsSetup) return 'profile-setup';
+    setUserAlias(status.username ?? getDisplayName(user));
+    return 'home';
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -30,8 +46,8 @@ export default function App() {
         } = await supabase.auth.getSession();
         if (!isMounted) return;
         if (session?.user) {
-          setUserAlias(getDisplayName(session.user));
-          setInitialDestination('home');
+          const destination = await resolveSignedInDestination(session.user);
+          if (isMounted) setInitialDestination(destination);
         } else {
           setInitialDestination('login');
         }
@@ -42,14 +58,14 @@ export default function App() {
 
     checkInitialSession();
 
-    // 2. Subscribe to auth state changes (login, logout, token refresh, session expiry)
+    // 2. Subscribe to auth state changes. Signing in is routed explicitly by the screens
+    //    (via handleAuthenticated) so the Login screen can reject brand-new Google users before
+    //    anything is shown; here we only react to profile updates and to losing the session.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.user) {
-        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED') {
-          setUserAlias(getDisplayName(session.user));
-        }
+      if (event === 'USER_UPDATED' && session?.user) {
+        setCurrentUser(session.user);
         return;
       }
 
@@ -57,6 +73,7 @@ export default function App() {
       // (expired/revoked refresh token), so both cases route back to Login.
       if (event === 'SIGNED_OUT') {
         setUserAlias('Agent');
+        setCurrentUser(null);
         setInitialDestination('login');
         setCurrentScreen((prev) => (PROTECTED_SCREENS.has(prev) ? 'login' : prev));
       }
@@ -66,7 +83,7 @@ export default function App() {
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [resolveSignedInDestination]);
 
   // Leave the splash screen once its animation is done AND the session check has finished,
   // so a logged-in user is never briefly shown the login screen.
@@ -80,10 +97,23 @@ export default function App() {
     setSplashFinished(true);
   }, []);
 
-  const handleAuthenticated = (alias: string) => {
-    setUserAlias(alias);
+  /** Called by Login / Sign Up once Supabase returned a session for an allowed user. */
+  const handleAuthenticated = useCallback(
+    async (user: User) => {
+      const destination = await resolveSignedInDestination(user);
+      setCurrentScreen(destination);
+    },
+    [resolveSignedInDestination]
+  );
+
+  const handleProfileComplete = useCallback((username: string) => {
+    setUserAlias(username);
     setCurrentScreen('home');
-  };
+  }, []);
+
+  const goToLogin = useCallback(() => setCurrentScreen('login'), []);
+  const goToSignUp = useCallback(() => setCurrentScreen('signup'), []);
+  const goToForgotPassword = useCallback(() => setCurrentScreen('forgot-password'), []);
 
   return (
     <View style={styles.container}>
@@ -93,21 +123,22 @@ export default function App() {
 
       {currentScreen === 'login' && (
         <LoginScreen
-          onNavigateToSignUp={() => setCurrentScreen('signup')}
-          onNavigateToForgotPassword={() => setCurrentScreen('forgot-password')}
-          onLoginSuccess={(user) => handleAuthenticated(getDisplayName(user))}
+          onNavigateToSignUp={goToSignUp}
+          onNavigateToForgotPassword={goToForgotPassword}
+          onLoginSuccess={handleAuthenticated}
         />
       )}
 
       {currentScreen === 'signup' && (
-        <SignUpScreen
-          onNavigateToLogin={() => setCurrentScreen('login')}
-          onSignUpSuccess={handleAuthenticated}
-        />
+        <SignUpScreen onNavigateToLogin={goToLogin} onSignUpSuccess={handleAuthenticated} />
       )}
 
       {currentScreen === 'forgot-password' && (
-        <ForgotPasswordScreen onNavigateToLogin={() => setCurrentScreen('login')} />
+        <ForgotPasswordScreen onNavigateToLogin={goToLogin} />
+      )}
+
+      {currentScreen === 'profile-setup' && currentUser && (
+        <ProfileSetupScreen user={currentUser} onComplete={handleProfileComplete} />
       )}
 
       {currentScreen === 'home' && (

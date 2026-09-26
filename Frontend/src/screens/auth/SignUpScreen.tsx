@@ -12,7 +12,9 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
+import { signInWithGoogle } from '../../lib/auth';
 import {
   MIN_PASSWORD_LENGTH,
   getFriendlyAuthError,
@@ -20,15 +22,20 @@ import {
   validateNewPassword,
 } from '../../lib/authHelpers';
 import { AuthTextInput } from '../../components/auth/AuthTextInput';
+import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
 import { useStableCallback } from '../../hooks/useStableCallback';
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
-  /** Called only when sign-up returned a session (i.e. email confirmation is disabled). */
-  onSignUpSuccess?: (alias: string) => void;
+  /**
+   * Called only when sign-up produced a session (email confirmation disabled, or Google).
+   * Awaited, so the button keeps its spinner while the app decides where to go next
+   * (the username is chosen on the Profile Setup screen).
+   */
+  onSignUpSuccess?: (user: User) => Promise<void> | void;
 }
 
-type FieldName = 'alias' | 'email' | 'password' | 'confirmPassword';
+type FieldName = 'email' | 'password' | 'confirmPassword';
 type FieldErrors = Partial<Record<FieldName, string>>;
 
 const ShowHideToggle = memo(function ShowHideToggle({
@@ -52,7 +59,6 @@ const ShowHideToggle = memo(function ShowHideToggle({
 });
 
 export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: SignUpScreenProps) {
-  const [alias, setAlias] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -60,6 +66,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null);
 
   const emailRef = useRef<TextInput>(null);
@@ -92,13 +99,6 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setFieldErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
     setErrorMessage((prev) => (prev ? '' : prev));
   }, []);
-  const handleAliasChange = useCallback(
-    (text: string) => {
-      setAlias(text);
-      clearFieldError('alias');
-    },
-    [clearFieldError]
-  );
   const handleEmailChange = useCallback(
     (text: string) => {
       setEmail(text);
@@ -121,7 +121,6 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     [clearFieldError]
   );
 
-  const focusEmail = useCallback(() => emailRef.current?.focus(), []);
   const focusPassword = useCallback(() => passwordRef.current?.focus(), []);
   const focusConfirm = useCallback(() => confirmPasswordRef.current?.focus(), []);
   const togglePassword = useCallback(() => setShowPassword((prev) => !prev), []);
@@ -132,7 +131,6 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
 
   const validate = (): FieldErrors => {
     const errors: FieldErrors = {};
-    if (!alias.trim()) errors.alias = 'Please choose your in-game alias.';
     const emailError = validateEmail(email.trim());
     if (emailError) errors.email = emailError;
     const passwordError = validateNewPassword(password);
@@ -150,21 +148,16 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setErrorMessage('');
     if (Object.values(errors).some(Boolean)) return;
 
-    const trimmedAlias = alias.trim();
     const trimmedEmail = email.trim();
 
     requestInFlight.current = true;
     setIsLoading(true);
 
     try {
+      // No username here: it is chosen (and checked for availability) on the Profile Setup screen.
       const { data, error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
-        options: {
-          data: {
-            username: trimmedAlias,
-          },
-        },
       });
 
       if (error) {
@@ -173,7 +166,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
         );
       } else if (data.session) {
         // Email confirmation is off: the user is signed in right away.
-        onSignUpSuccess?.(trimmedAlias);
+        await onSignUpSuccess?.(data.session.user);
       } else if (data.user && data.user.identities?.length === 0) {
         // With confirmation on, Supabase returns a user without identities for an existing email.
         setErrorMessage('An account with this email already exists. Try logging in instead.');
@@ -190,6 +183,28 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
       setIsLoading(false);
     }
   });
+
+  // Google from the Sign Up screen creates the account (or signs in an existing one).
+  const handleGoogleSignUp = useStableCallback(async () => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    setGoogleLoading(true);
+    setErrorMessage('');
+    try {
+      const session = await signInWithGoogle();
+      // null means the user closed the browser: stay here.
+      if (session?.user) {
+        await onSignUpSuccess?.(session.user);
+      }
+    } catch (err: unknown) {
+      setErrorMessage(getFriendlyAuthError(err, "Google sign-up didn't work. Please try again."));
+    } finally {
+      requestInFlight.current = false;
+      setGoogleLoading(false);
+    }
+  });
+
+  const busy = isLoading || googleLoading;
 
   return (
     <View style={styles.container}>
@@ -225,7 +240,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
               <Text style={styles.subtitle}>
                 {confirmationSentTo
                   ? `We sent a confirmation link to ${confirmationSentTo}. Confirm your email, then log in.`
-                  : 'Create your alias in the underground'}
+                  : "Create your account. You'll pick your alias next."}
               </Text>
             </View>
 
@@ -251,22 +266,6 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
             ) : (
               <View style={styles.form}>
                 <AuthTextInput
-                  label="In-Game Alias"
-                  error={fieldErrors.alias}
-                  placeholder="e.g. ShadowVito or InspectorHolt"
-                  value={alias}
-                  onChangeText={handleAliasChange}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="off"
-                  maxLength={20}
-                  returnKeyType="next"
-                  submitBehavior="submit"
-                  onSubmitEditing={focusEmail}
-                  editable={!isLoading}
-                />
-
-                <AuthTextInput
                   ref={emailRef}
                   label="Email Address"
                   error={fieldErrors.email}
@@ -281,7 +280,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                   returnKeyType="next"
                   submitBehavior="submit"
                   onSubmitEditing={focusPassword}
-                  editable={!isLoading}
+                  editable={!busy}
                 />
 
                 <AuthTextInput
@@ -300,7 +299,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                   returnKeyType="next"
                   submitBehavior="submit"
                   onSubmitEditing={focusConfirm}
-                  editable={!isLoading}
+                  editable={!busy}
                 />
 
                 <AuthTextInput
@@ -317,17 +316,17 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                   textContentType="newPassword"
                   returnKeyType="go"
                   onSubmitEditing={handleSignUp}
-                  editable={!isLoading}
+                  editable={!busy}
                 />
 
                 {/* Submit Button */}
                 <TouchableOpacity
-                  style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
+                  style={[styles.primaryButton, busy && styles.buttonDisabled]}
                   onPress={handleSignUp}
                   activeOpacity={0.85}
-                  disabled={isLoading}
+                  disabled={busy}
                   accessibilityRole="button"
-                  accessibilityState={{ disabled: isLoading, busy: isLoading }}
+                  accessibilityState={{ disabled: busy, busy: isLoading }}
                 >
                   <View style={styles.buttonContent}>
                     {isLoading ? (
@@ -338,21 +337,31 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                       />
                     ) : null}
                     <Text style={styles.primaryButtonText}>
-                      {isLoading ? 'ENROLLING ALIAS...' : 'CREATE IDENTITY'}
+                      {isLoading ? 'ENROLLING...' : 'CREATE IDENTITY'}
                     </Text>
                   </View>
                 </TouchableOpacity>
+
+                <View style={styles.orRow}>
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>OR</Text>
+                  <View style={styles.orLine} />
+                </View>
+
+                <GoogleSignInButton
+                  label="SIGN UP WITH GOOGLE"
+                  onPress={handleGoogleSignUp}
+                  loading={googleLoading}
+                  disabled={busy}
+                  style={styles.googleButton}
+                />
               </View>
             )}
 
             {/* Footer Navigation */}
             <View style={styles.footer}>
-              <Text style={styles.footerText}>Already have an alias?</Text>
-              <TouchableOpacity
-                onPress={onNavigateToLogin}
-                disabled={isLoading}
-                activeOpacity={0.7}
-              >
+              <Text style={styles.footerText}>Already have an account?</Text>
+              <TouchableOpacity onPress={onNavigateToLogin} disabled={busy} activeOpacity={0.7}>
                 <Text style={styles.loginLink}> Log In</Text>
               </TouchableOpacity>
             </View>
@@ -492,6 +501,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
     letterSpacing: 1.5,
+  },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 18,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#1e293b',
+  },
+  orText: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginHorizontal: 12,
+  },
+  googleButton: {
+    marginTop: 14,
+    borderRadius: 12,
   },
   footer: {
     flexDirection: 'row',
