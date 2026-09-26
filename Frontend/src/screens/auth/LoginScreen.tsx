@@ -18,7 +18,7 @@ import { StatusBar } from 'expo-status-bar';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/auth';
-import { getFriendlyAuthError, isBrandNewAccount, validateEmail } from '../../lib/authHelpers';
+import { getFriendlyAuthError, isBrandNewAccount } from '../../lib/authHelpers';
 import { AuthTextInput } from '../../components/auth/AuthTextInput';
 import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
 import { useStableCallback } from '../../hooks/useStableCallback';
