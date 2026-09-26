@@ -22,7 +22,7 @@ interface CreateRoomScreenProps {
   onRoomCreated: (room: Room) => void;
 }
 
-const PLAYER_PRESETS = [6, 8, 10, 12, 16];
+const PLAYER_PRESETS = [6, 8, 10, 12, 16, 20];
 
 export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomScreenProps) {
   const [roomName, setRoomName] = useState('');
@@ -50,7 +50,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
 
     try {
       const { room } = await createRoom({
-        name: roomName.trim() || 'Syndicate Hideout',
+        name: roomName.trim() || 'Mafia Room',
         isPublic,
         maxPlayers,
         settings: {
@@ -90,8 +90,8 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
         </TouchableOpacity>
 
         <View style={styles.headerTitleGroup}>
-          <Text style={styles.headerTitle}>HOST OPERATION</Text>
-          <Text style={styles.headerSub}>Create Custom Syndicate Room</Text>
+          <Text style={styles.headerTitle}>CREATE ROOM</Text>
+          <Text style={styles.headerSub}>Host a Game Room</Text>
         </View>
 
         <View style={styles.headerRightPlaceholder} />
@@ -115,10 +115,10 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
 
           {/* Section: Room Name */}
           <View style={styles.card}>
-            <Text style={styles.sectionLabel}>OPERATION CODE-NAME</Text>
+            <Text style={styles.sectionLabel}>ROOM NAME</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. Midnight Heist, Syndicate Base"
+              placeholder="e.g. Mafia Room, Town Square"
               placeholderTextColor="#475569"
               value={roomName}
               onChangeText={setRoomName}
@@ -130,8 +130,8 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
           {/* Section: Max Players */}
           <View style={styles.card}>
             <View style={styles.cardHeaderRow}>
-              <Text style={styles.sectionLabel}>OPERATIVE CAPACITY</Text>
-              <Text style={styles.capacityBadge}>{maxPlayers} PLAYERS</Text>
+              <Text style={styles.sectionLabel}>PLAYERS</Text>
+              <Text style={styles.capacityBadge}>{maxPlayers} PLAYERS MAX</Text>
             </View>
 
             {/* Presets Row */}
@@ -169,7 +169,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
                 <Text style={styles.stepperBtnText}>-</Text>
               </TouchableOpacity>
 
-              <Text style={styles.stepperValue}>{maxPlayers} Operatives</Text>
+              <Text style={styles.stepperValue}>{maxPlayers} Players (Max 20)</Text>
 
               <TouchableOpacity
                 style={[styles.stepperBtn, maxPlayers >= 20 && styles.stepperDisabled]}
@@ -186,12 +186,12 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
             <View style={styles.toggleRow}>
               <View style={styles.toggleTextGroup}>
                 <Text style={styles.toggleTitle}>
-                  {isPublic ? 'PUBLIC OPERATION' : 'PRIVATE OPERATION'}
+                  {isPublic ? 'Public Room' : 'Private Room'}
                 </Text>
                 <Text style={styles.toggleSub}>
                   {isPublic
-                    ? 'Listed in public lobbies. Anyone can join.'
-                    : 'Unlisted. Requires secret 5-character room key.'}
+                    ? 'Listed in public rooms. Anyone can join.'
+                    : 'Unlisted. Players must enter the 5-character room code.'}
                 </Text>
               </View>
               <Switch
@@ -312,7 +312,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
               <ActivityIndicator color="#ffffff" size="small" style={styles.spinner} />
             ) : null}
             <Text style={styles.createButtonText}>
-              {isLoading ? 'ESTABLISHING BASE...' : 'CREATE ROOM LOBBY'}
+              {isLoading ? 'CREATING ROOM...' : 'CREATE ROOM'}
             </Text>
           </TouchableOpacity>
         </ScrollView>

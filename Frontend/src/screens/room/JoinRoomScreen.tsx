@@ -161,8 +161,8 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
         </TouchableOpacity>
 
         <View style={styles.headerTitleGroup}>
-          <Text style={styles.headerTitle}>JOIN OPERATION</Text>
-          <Text style={styles.headerSub}>Direct Key or Public Lobby</Text>
+          <Text style={styles.headerTitle}>JOIN ROOM</Text>
+          <Text style={styles.headerSub}>Enter Room Code or Join Public Room</Text>
         </View>
 
         <View style={styles.headerRightPlaceholder} />
@@ -174,7 +174,7 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
       >
         {/* Direct Code Entry Card */}
         <View style={styles.codeCard}>
-          <Text style={styles.sectionLabel}>SECRET ROOM KEY</Text>
+          <Text style={styles.sectionLabel}>ROOM CODE</Text>
 
           {/* Error Banner */}
           {errorMessage ? (
@@ -214,7 +214,7 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
               {isJoining ? (
                 <ActivityIndicator color="#ffffff" size="small" />
               ) : (
-                <Text style={styles.submitCodeText}>INFILTRATE</Text>
+                <Text style={styles.submitCodeText}>JOIN</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -222,7 +222,7 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
 
         {/* Public Rooms Header */}
         <View style={styles.publicHeaderRow}>
-          <Text style={styles.publicSectionTitle}>ACTIVE PUBLIC BASES</Text>
+          <Text style={styles.publicSectionTitle}>PUBLIC ROOMS</Text>
           <TouchableOpacity onPress={loadPublicRooms} activeOpacity={0.7}>
             <Text style={styles.refreshText}>REFRESH</Text>
           </TouchableOpacity>
@@ -232,7 +232,7 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
         {loadingRooms && !refreshing ? (
           <View style={styles.centerBox}>
             <ActivityIndicator color="#e11d48" size="large" />
-            <Text style={styles.loadingText}>Scanning frequency channels...</Text>
+            <Text style={styles.loadingText}>Loading public rooms...</Text>
           </View>
         ) : (
           <FlatList
@@ -251,9 +251,9 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
             }
             ListEmptyComponent={
               <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>NO PUBLIC BASES ACTIVE</Text>
+                <Text style={styles.emptyTitle}>NO PUBLIC ROOMS</Text>
                 <Text style={styles.emptySub}>
-                  No operations are currently open. Enter a private key or create your own room.
+                  No public rooms are active right now. Enter a room code above or create your own room.
                 </Text>
               </View>
             }
