@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
   Platform,
@@ -12,6 +13,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
+import { getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
 
 interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
@@ -19,9 +21,12 @@ interface ForgotPasswordScreenProps {
 
 export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswordScreenProps) {
   const [email, setEmail] = useState('');
+  const [submittedEmail, setSubmittedEmail] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Synchronous guard so rapid double taps can't send two recovery emails.
+  const requestInFlight = useRef(false);
 
   // Animations
   const [fadeAnim] = useState(() => new Animated.Value(0));
@@ -43,25 +48,31 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
   }, [fadeAnim, slideAnim]);
 
   const handleSendRecovery = async () => {
-    if (!email.trim() || !email.includes('@')) {
-      setErrorMessage('Please enter a valid registered email.');
+    if (requestInFlight.current) return;
+
+    const trimmedEmail = email.trim();
+    const emailError = validateEmail(trimmedEmail);
+    if (emailError) {
+      setErrorMessage(emailError);
       return;
     }
 
     setErrorMessage('');
+    requestInFlight.current = true;
     setIsLoading(true);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail);
       if (error) {
-        setErrorMessage(error.message);
+        setErrorMessage(getFriendlyAuthError(error, 'Failed to send recovery email.'));
       } else {
+        setSubmittedEmail(trimmedEmail);
         setIsSubmitted(true);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to send recovery email.';
-      setErrorMessage(msg);
+      setErrorMessage(getFriendlyAuthError(err, 'Failed to send recovery email.'));
     } finally {
+      requestInFlight.current = false;
       setIsLoading(false);
     }
   };
@@ -95,7 +106,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
               <Text style={styles.title}>{isSubmitted ? 'DISPATCH SENT' : 'RECOVER ACCESS'}</Text>
               <Text style={styles.subtitle}>
                 {isSubmitted
-                  ? `A secret recovery link has been transmitted to ${email}`
+                  ? `A secret recovery link has been transmitted to ${submittedEmail}`
                   : 'Enter your registered email address to receive instructions.'}
               </Text>
             </View>
@@ -103,7 +114,9 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
             {/* Error message */}
             {errorMessage ? (
               <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{errorMessage}</Text>
+                <Text style={styles.errorText} accessibilityLiveRegion="polite">
+                  {errorMessage}
+                </Text>
               </View>
             ) : null}
 
@@ -137,7 +150,7 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Registered Email</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, !!errorMessage && styles.inputError]}
                     placeholder="operative@domain.com"
                     placeholderTextColor="#475569"
                     value={email}
@@ -148,6 +161,12 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    autoComplete="email"
+                    textContentType="emailAddress"
+                    importantForAutofill="yes"
+                    returnKeyType="send"
+                    onSubmitEditing={handleSendRecovery}
+                    editable={!isLoading}
                   />
                 </View>
 
@@ -156,15 +175,22 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
                   onPress={handleSendRecovery}
                   activeOpacity={0.85}
                   disabled={isLoading}
+                  accessibilityState={{ disabled: isLoading, busy: isLoading }}
                 >
-                  <Text style={styles.primaryButtonText}>
-                    {isLoading ? 'TRANSMITTING...' : 'SEND RECOVERY LINK'}
-                  </Text>
+                  <View style={styles.buttonContent}>
+                    {isLoading ? (
+                      <ActivityIndicator color="#ffffff" size="small" style={styles.buttonSpinner} />
+                    ) : null}
+                    <Text style={styles.primaryButtonText}>
+                      {isLoading ? 'TRANSMITTING...' : 'SEND RECOVERY LINK'}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.backButton}
                   onPress={onNavigateToLogin}
+                  disabled={isLoading}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.backText}>← Back to Login</Text>
@@ -277,6 +303,17 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     color: '#f8fafc',
     fontSize: 15,
+  },
+  inputError: {
+    borderColor: '#e11d48',
+  },
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonSpinner: {
+    marginRight: 8,
   },
   primaryButton: {
     backgroundColor: '#e11d48',
