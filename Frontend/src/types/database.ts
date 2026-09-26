@@ -86,27 +86,36 @@ export interface Database {
         Row: {
           id: string;
           room_id: string;
-          user_id: string;
+          user_id: string | null;
           is_ready: boolean;
           is_host: boolean;
+          is_bot?: boolean;
+          bot_name?: string | null;
+          bot_avatar?: string | null;
           joined_at: string;
           last_seen_at: string;
         };
         Insert: {
           id?: string;
           room_id: string;
-          user_id: string;
+          user_id?: string | null;
           is_ready?: boolean;
           is_host?: boolean;
+          is_bot?: boolean;
+          bot_name?: string | null;
+          bot_avatar?: string | null;
           joined_at?: string;
           last_seen_at?: string;
         };
         Update: {
           id?: string;
           room_id?: string;
-          user_id?: string;
+          user_id?: string | null;
           is_ready?: boolean;
           is_host?: boolean;
+          is_bot?: boolean;
+          bot_name?: string | null;
+          bot_avatar?: string | null;
           last_seen_at?: string;
         };
         Relationships: [];
@@ -423,6 +432,21 @@ export interface Database {
       delete_user_account: {
         Args: Record<string, never>;
         Returns: void;
+      };
+      add_bot_to_room: {
+        Args: {
+          p_room_id: string;
+          p_bot_name: string;
+          p_bot_avatar: string;
+        };
+        Returns: Json;
+      };
+      remove_bot_from_room: {
+        Args: {
+          p_room_id: string;
+          p_player_id: string;
+        };
+        Returns: boolean;
       };
     };
     Enums: { [_ in never]: never };

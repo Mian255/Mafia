@@ -28,6 +28,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
   const [roomName, setRoomName] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [maxPlayers, setMaxPlayers] = useState(10);
+  const [customMafiaCount, setCustomMafiaCount] = useState(2);
   const [doctorEnabled, setDoctorEnabled] = useState(true);
   const [detectiveEnabled, setDetectiveEnabled] = useState(true);
   const [nightDuration, setNightDuration] = useState(30);
@@ -36,12 +37,42 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Auto-derived mafia count based on player size
-  const mafiaCount = useMemo(() => Math.max(1, Math.floor(maxPlayers / 4)), [maxPlayers]);
-  const civilianCount = useMemo(
-    () => Math.max(1, maxPlayers - mafiaCount - (doctorEnabled ? 1 : 0) - (detectiveEnabled ? 1 : 0)),
-    [maxPlayers, mafiaCount, doctorEnabled, detectiveEnabled]
-  );
+  // Calculate maximum allowed Mafia so town always has a fair majority
+  const maxAllowedMafia = useMemo(() => {
+    const specialRoles = (doctorEnabled ? 1 : 0) + (detectiveEnabled ? 1 : 0);
+    // Mafia must be strictly < half of players AND leave at least 1 civilian
+    const halfLimit = Math.floor((maxPlayers - 1) / 2);
+    const roomLimit = maxPlayers - specialRoles - 1;
+    return Math.max(1, Math.min(halfLimit, roomLimit));
+  }, [maxPlayers, doctorEnabled, detectiveEnabled]);
+
+  const effectiveMafiaCount = Math.min(Math.max(1, customMafiaCount), maxAllowedMafia);
+
+  // Auto-derived civilian count
+  const civilianCount = useMemo(() => {
+    return Math.max(
+      1,
+      maxPlayers - effectiveMafiaCount - (doctorEnabled ? 1 : 0) - (detectiveEnabled ? 1 : 0)
+    );
+  }, [maxPlayers, effectiveMafiaCount, doctorEnabled, detectiveEnabled]);
+
+  // Balance rating
+  const balanceInfo = useMemo(() => {
+    const mafiaPct = Math.round((effectiveMafiaCount / maxPlayers) * 100);
+    if (mafiaPct <= 25) {
+      return { label: `Balanced Setup (${mafiaPct}% Mafia)`, color: '#10b981', bg: 'rgba(16, 185, 129, 0.12)' };
+    }
+    if (mafiaPct <= 35) {
+      return { label: `Competitive Setup (${mafiaPct}% Mafia)`, color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)' };
+    }
+    return { label: `Challenging Setup (${mafiaPct}% Mafia)`, color: '#f43f5e', bg: 'rgba(244, 63, 94, 0.12)' };
+  }, [effectiveMafiaCount, maxPlayers]);
+
+  const handlePlayerPresetChange = (preset: number) => {
+    setMaxPlayers(preset);
+    const recommendedMafia = Math.max(1, Math.floor(preset / 4));
+    setCustomMafiaCount(recommendedMafia);
+  };
 
   const handleCreate = useStableCallback(async () => {
     if (isLoading) return;
@@ -54,7 +85,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
         isPublic,
         maxPlayers,
         settings: {
-          mafia_count: mafiaCount,
+          mafia_count: effectiveMafiaCount,
           doctor_enabled: doctorEnabled,
           detective_enabled: detectiveEnabled,
           night_duration_seconds: nightDuration,
@@ -130,7 +161,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
           {/* Section: Max Players */}
           <View style={styles.card}>
             <View style={styles.cardHeaderRow}>
-              <Text style={styles.sectionLabel}>PLAYERS</Text>
+              <Text style={styles.sectionLabel}>PLAYERS CAPACITY</Text>
               <Text style={styles.capacityBadge}>{maxPlayers} PLAYERS MAX</Text>
             </View>
 
@@ -143,7 +174,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
                     styles.presetPill,
                     maxPlayers === preset && styles.presetPillActive,
                   ]}
-                  onPress={() => setMaxPlayers(preset)}
+                  onPress={() => handlePlayerPresetChange(preset)}
                   disabled={isLoading}
                   activeOpacity={0.8}
                 >
@@ -163,17 +194,23 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
             <View style={styles.stepperRow}>
               <TouchableOpacity
                 style={[styles.stepperBtn, maxPlayers <= 4 && styles.stepperDisabled]}
-                onPress={() => setMaxPlayers((prev) => Math.max(4, prev - 1))}
+                onPress={() => {
+                  const next = Math.max(4, maxPlayers - 1);
+                  setMaxPlayers(next);
+                }}
                 disabled={maxPlayers <= 4 || isLoading}
               >
                 <Text style={styles.stepperBtnText}>-</Text>
               </TouchableOpacity>
 
-              <Text style={styles.stepperValue}>{maxPlayers} Players (Max 20)</Text>
+              <Text style={styles.stepperValue}>{maxPlayers} Players (Min 4, Max 20)</Text>
 
               <TouchableOpacity
                 style={[styles.stepperBtn, maxPlayers >= 20 && styles.stepperDisabled]}
-                onPress={() => setMaxPlayers((prev) => Math.min(20, prev + 1))}
+                onPress={() => {
+                  const next = Math.min(20, maxPlayers + 1);
+                  setMaxPlayers(next);
+                }}
                 disabled={maxPlayers >= 20 || isLoading}
               >
                 <Text style={styles.stepperBtnText}>+</Text>
@@ -204,40 +241,94 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
             </View>
           </View>
 
-          {/* Section: Role Allocation Preview */}
+          {/* Section: Fair Role Customization */}
           <View style={styles.card}>
-            <Text style={styles.sectionLabel}>ROLE DISTRIBUTION PREVIEW</Text>
+            <View style={styles.cardHeaderRow}>
+              <Text style={styles.sectionLabel}>ROLE QUANTITIES & BALANCE</Text>
+              <View style={[styles.balancePill, { backgroundColor: balanceInfo.bg }]}>
+                <Text style={[styles.balancePillText, { color: balanceInfo.color }]}>
+                  {balanceInfo.label}
+                </Text>
+              </View>
+            </View>
 
+            {/* Role Grid Preview */}
             <View style={styles.roleGrid}>
+              {/* Mafia Card with Stepper */}
               <View style={[styles.rolePill, { borderColor: '#e11d48' }]}>
-                <Text style={[styles.roleCount, { color: '#e11d48' }]}>{mafiaCount}</Text>
+                <Text style={[styles.roleCount, { color: '#e11d48' }]}>{customMafiaCount}</Text>
                 <Text style={styles.roleName}>Mafia</Text>
+                <Text style={styles.roleSubtext}>Max {maxAllowedMafia}</Text>
               </View>
 
+              {/* Detective Card */}
               <View style={[styles.rolePill, { borderColor: '#0ea5e9' }]}>
                 <Text style={[styles.roleCount, { color: '#0ea5e9' }]}>
                   {detectiveEnabled ? 1 : 0}
                 </Text>
                 <Text style={styles.roleName}>Detective</Text>
+                <Text style={styles.roleSubtext}>{detectiveEnabled ? 'Active' : 'Off'}</Text>
               </View>
 
+              {/* Doctor Card */}
               <View style={[styles.rolePill, { borderColor: '#10b981' }]}>
                 <Text style={[styles.roleCount, { color: '#10b981' }]}>
                   {doctorEnabled ? 1 : 0}
                 </Text>
                 <Text style={styles.roleName}>Doctor</Text>
+                <Text style={styles.roleSubtext}>{doctorEnabled ? 'Active' : 'Off'}</Text>
               </View>
 
+              {/* Civilian Card */}
               <View style={[styles.rolePill, { borderColor: '#94a3b8' }]}>
                 <Text style={[styles.roleCount, { color: '#94a3b8' }]}>{civilianCount}</Text>
                 <Text style={styles.roleName}>Civilians</Text>
+                <Text style={styles.roleSubtext}>Town Base</Text>
+              </View>
+            </View>
+
+            {/* Mafia Quantity Stepper Row */}
+            <View style={styles.mafiaControlRow}>
+              <View style={styles.mafiaControlInfo}>
+                <Text style={styles.mafiaControlTitle}>Customize Mafia Count</Text>
+                <Text style={styles.mafiaControlSub}>
+                  {customMafiaCount} of {maxPlayers} total players (Fair cap: {maxAllowedMafia})
+                </Text>
+              </View>
+
+              <View style={styles.miniStepper}>
+                <TouchableOpacity
+                  style={[styles.miniStepperBtn, customMafiaCount <= 1 && styles.stepperDisabled]}
+                  onPress={() => setCustomMafiaCount((prev) => Math.max(1, prev - 1))}
+                  disabled={customMafiaCount <= 1 || isLoading}
+                >
+                  <Text style={styles.miniStepperBtnText}>-</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.miniStepperValue}>{customMafiaCount}</Text>
+
+                <TouchableOpacity
+                  style={[
+                    styles.miniStepperBtn,
+                    customMafiaCount >= maxAllowedMafia && styles.stepperDisabled,
+                  ]}
+                  onPress={() =>
+                    setCustomMafiaCount((prev) => Math.min(maxAllowedMafia, prev + 1))
+                  }
+                  disabled={customMafiaCount >= maxAllowedMafia || isLoading}
+                >
+                  <Text style={styles.miniStepperBtnText}>+</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
             {/* Special Roles Toggles */}
             <View style={styles.roleToggleGroup}>
               <View style={styles.subToggleRow}>
-                <Text style={styles.subToggleLabel}>Enable Detective Role</Text>
+                <View>
+                  <Text style={styles.subToggleLabel}>Detective Role</Text>
+                  <Text style={styles.subToggleDesc}>Investigates 1 suspect each night</Text>
+                </View>
                 <Switch
                   value={detectiveEnabled}
                   onValueChange={setDetectiveEnabled}
@@ -248,7 +339,10 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
               </View>
 
               <View style={styles.subToggleRow}>
-                <Text style={styles.subToggleLabel}>Enable Doctor Role</Text>
+                <View>
+                  <Text style={styles.subToggleLabel}>Doctor Role</Text>
+                  <Text style={styles.subToggleDesc}>Protects 1 player each night</Text>
+                </View>
                 <Switch
                   value={doctorEnabled}
                   onValueChange={setDoctorEnabled}
@@ -262,7 +356,7 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
 
           {/* Section: Timers */}
           <View style={styles.card}>
-            <Text style={styles.sectionLabel}>OPERATION PHASE TIMERS</Text>
+            <Text style={styles.sectionLabel}>PHASE TIMERS</Text>
 
             <View style={styles.timerRow}>
               <View style={styles.timerBlock}>
@@ -396,22 +490,32 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
+    flexWrap: 'wrap',
+    gap: 6,
   },
   sectionLabel: {
     fontSize: 12,
     fontWeight: '800',
     color: '#94a3b8',
     letterSpacing: 1,
-    marginBottom: 10,
   },
   capacityBadge: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#e11d48',
     backgroundColor: 'rgba(225, 29, 72, 0.12)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
+  },
+  balancePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  balancePillText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
   input: {
     backgroundColor: '#07090e',
@@ -422,6 +526,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     color: '#f8fafc',
     fontSize: 15,
+    marginTop: 8,
   },
   presetsRow: {
     flexDirection: 'row',
@@ -432,7 +537,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#1e293b',
     paddingVertical: 10,
-    marginHorizontal: 4,
+    marginHorizontal: 3,
     borderRadius: 10,
     alignItems: 'center',
   },
@@ -473,7 +578,7 @@ const styles = StyleSheet.create({
   },
   stepperValue: {
     color: '#f1f5f9',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
   toggleRow: {
@@ -499,15 +604,15 @@ const styles = StyleSheet.create({
   roleGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginVertical: 12,
   },
   rolePill: {
     flex: 1,
     backgroundColor: '#07090e',
     borderWidth: 1.5,
     borderRadius: 12,
-    paddingVertical: 12,
-    marginHorizontal: 4,
+    paddingVertical: 10,
+    marginHorizontal: 3,
     alignItems: 'center',
   },
   roleCount: {
@@ -516,29 +621,93 @@ const styles = StyleSheet.create({
   },
   roleName: {
     fontSize: 11,
-    color: '#94a3b8',
-    fontWeight: '600',
+    color: '#f1f5f9',
+    fontWeight: '700',
     marginTop: 2,
+  },
+  roleSubtext: {
+    fontSize: 9,
+    color: '#64748b',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  mafiaControlRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#07090e',
+    padding: 12,
+    borderRadius: 12,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  mafiaControlInfo: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  mafiaControlTitle: {
+    color: '#f8fafc',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  mafiaControlSub: {
+    color: '#64748b',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  miniStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#161e2e',
+    borderRadius: 8,
+    padding: 2,
+  },
+  miniStepperBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniStepperBtnText: {
+    color: '#f8fafc',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  miniStepperValue: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '800',
+    paddingHorizontal: 12,
   },
   roleToggleGroup: {
     borderTopWidth: 1,
     borderTopColor: '#1e293b',
-    paddingTop: 12,
+    paddingTop: 8,
+    marginTop: 6,
   },
   subToggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 8,
   },
   subToggleLabel: {
     color: '#cbd5e1',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  subToggleDesc: {
+    color: '#64748b',
+    fontSize: 11,
+    marginTop: 2,
   },
   timerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 10,
   },
   timerBlock: {
     flex: 1,

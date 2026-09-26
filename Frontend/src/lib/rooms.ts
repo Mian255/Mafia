@@ -8,6 +8,15 @@ export type RoomSettings = Database['public']['Tables']['room_settings']['Row'];
 export interface LobbyPlayer extends RoomPlayer {
   username?: string;
   avatar_url?: string | null;
+  is_bot?: boolean;
+  bot_name?: string | null;
+  bot_avatar?: string | null;
+}
+
+export interface LobbyFriendItem {
+  id: string;
+  username: string;
+  avatar_url: string | null;
 }
 
 export interface PublicRoomItem extends Room {
@@ -245,7 +254,7 @@ export async function fetchPublicRooms(): Promise<PublicRoomItem[]> {
 }
 
 /**
- * Fetches all players in a room along with their profiles.
+ * Fetches all players in a room along with their profiles and bot details.
  */
 export async function fetchLobbyPlayers(roomId: string): Promise<LobbyPlayer[]> {
   const { data: players, error } = await supabase
@@ -262,12 +271,15 @@ export async function fetchLobbyPlayers(roomId: string): Promise<LobbyPlayer[]> 
     id: p.id,
     room_id: p.room_id,
     user_id: p.user_id,
-    is_ready: p.is_ready,
-    is_host: p.is_host,
+    is_ready: p.is_bot ? true : (p.is_ready ?? false),
+    is_host: p.is_host ?? false,
+    is_bot: p.is_bot ?? false,
+    bot_name: p.bot_name || null,
+    bot_avatar: p.bot_avatar || null,
     joined_at: p.joined_at,
     last_seen_at: p.last_seen_at,
-    username: p.profile?.username || 'Operative',
-    avatar_url: p.profile?.avatar_url || null,
+    username: p.is_bot ? (p.bot_name || 'Bot Player') : (p.profile?.username || 'Player'),
+    avatar_url: p.is_bot ? (p.bot_avatar || 'detective') : (p.profile?.avatar_url || null),
   }));
 }
 
@@ -288,6 +300,100 @@ export async function setPlayerReady(roomId: string, isReady: boolean): Promise<
 }
 
 /**
+ * Adds an AI/bot player to the room (Host only).
+ */
+export async function addBotToRoom(
+  roomId: string,
+  botName?: string,
+  botAvatar?: string
+): Promise<void> {
+  // First try RPC for atomic server-side validation
+  const { error: rpcError } = await supabase.rpc('add_bot_to_room', {
+    p_room_id: roomId,
+    p_bot_name: botName || 'Bot Player',
+    p_bot_avatar: botAvatar || 'detective',
+  });
+
+  if (rpcError) {
+    // Direct insert fallback
+    const { error: insertError } = await supabase.from('room_players').insert({
+      room_id: roomId,
+      user_id: null,
+      is_ready: true,
+      is_host: false,
+      is_bot: true,
+      bot_name: botName || 'Bot Player',
+      bot_avatar: botAvatar || 'detective',
+    });
+
+    if (insertError) {
+      throw new Error(insertError.message || 'Failed to add bot to room.');
+    }
+  }
+}
+
+/**
+ * Removes an AI/bot player from the room (Host only).
+ */
+export async function removeBotFromRoom(roomId: string, botPlayerId: string): Promise<void> {
+  const { error: rpcError } = await supabase.rpc('remove_bot_from_room', {
+    p_room_id: roomId,
+    p_player_id: botPlayerId,
+  });
+
+  if (rpcError) {
+    const { error: deleteError } = await supabase
+      .from('room_players')
+      .delete()
+      .eq('id', botPlayerId)
+      .eq('room_id', roomId);
+
+    if (deleteError) {
+      throw new Error(deleteError.message || 'Failed to remove bot from room.');
+    }
+  }
+}
+
+/**
+ * Fetches user friends from friendships table for in-lobby invitations.
+ */
+export async function fetchUserFriends(): Promise<LobbyFriendItem[]> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  // Query friendships where user is user_id or friend_id
+  const { data: friendships, error: friendError } = await supabase
+    .from('friendships')
+    .select('user_id, friend_id')
+    .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
+
+  if (friendError || !friendships || friendships.length === 0) {
+    return [];
+  }
+
+  const friendIds = Array.from(
+    new Set(friendships.map((f) => (f.user_id === user.id ? f.friend_id : f.user_id)))
+  );
+
+  if (friendIds.length === 0) return [];
+
+  const { data: profiles, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, username, avatar_url')
+    .in('id', friendIds);
+
+  if (profileError || !profiles) return [];
+
+  return profiles.map((p) => ({
+    id: p.id,
+    username: p.username || 'Friend',
+    avatar_url: p.avatar_url || null,
+  }));
+}
+
+/**
  * Leaves a room. If host leaves, passes host or closes room.
  */
 export async function leaveRoom(roomId: string, isHost: boolean): Promise<void> {
@@ -300,21 +406,22 @@ export async function leaveRoom(roomId: string, isHost: boolean): Promise<void> 
     // If host leaves, check if there are other players to promote
     const { data: remaining } = await supabase
       .from('room_players')
-      .select('id, user_id')
+      .select('id, user_id, is_bot')
       .eq('room_id', roomId)
       .neq('user_id', user.id)
+      .eq('is_bot', false)
       .order('joined_at', { ascending: true })
       .limit(1);
 
-    if (remaining && remaining.length > 0) {
+    if (remaining && remaining.length > 0 && remaining[0].user_id) {
       const newHost = remaining[0];
       await Promise.all([
-        supabase.from('rooms').update({ host_id: newHost.user_id }).eq('id', roomId),
+        supabase.from('rooms').update({ host_id: newHost.user_id as string }).eq('id', roomId),
         supabase.from('room_players').update({ is_host: true }).eq('id', newHost.id),
         supabase.from('room_players').delete().eq('room_id', roomId).eq('user_id', user.id),
       ]);
     } else {
-      // No other players, mark room abandoned
+      // No other human players, mark room abandoned
       await Promise.all([
         supabase.from('rooms').update({ status: 'abandoned' }).eq('id', roomId),
         supabase.from('room_players').delete().eq('room_id', roomId).eq('user_id', user.id),
@@ -356,16 +463,30 @@ export async function transferHost(
 }
 
 /**
- * Kicks/removes a player from the room (Host only).
+ * Kicks/removes a player (or bot) from the room (Host only).
  */
-export async function kickPlayer(roomId: string, targetUserId: string): Promise<void> {
-  const { error } = await supabase
-    .from('room_players')
-    .delete()
-    .eq('room_id', roomId)
-    .eq('user_id', targetUserId);
+export async function kickPlayer(
+  roomId: string,
+  targetUserId?: string | null,
+  targetPlayerId?: string
+): Promise<void> {
+  if (targetUserId) {
+    const { error } = await supabase
+      .from('room_players')
+      .delete()
+      .eq('room_id', roomId)
+      .eq('user_id', targetUserId);
 
-  if (error) throw new Error(error.message || 'Failed to remove player.');
+    if (error) throw new Error(error.message || 'Failed to remove player.');
+  } else if (targetPlayerId) {
+    const { error } = await supabase
+      .from('room_players')
+      .delete()
+      .eq('room_id', roomId)
+      .eq('id', targetPlayerId);
+
+    if (error) throw new Error(error.message || 'Failed to remove player.');
+  }
 }
 
 /**
