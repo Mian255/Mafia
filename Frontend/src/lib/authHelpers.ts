@@ -79,6 +79,27 @@ export function getFriendlyAuthError(
 ): string {
   if (isNetworkError(error)) return CONNECTION_MESSAGE;
 
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error !== null && 'message' in error
+        ? String((error as { message: unknown }).message)
+        : typeof error === 'string'
+          ? error
+          : '';
+
+  if (/request path invalid|requested path is invalid/i.test(rawMessage)) {
+    return 'Google sign-in was unable to complete the redirect. Please verify your Google account or sign up with email.';
+  }
+
+  if (/access_denied|cancelled|user canceled/i.test(rawMessage)) {
+    return 'Google sign-in was cancelled.';
+  }
+
+  if (/invalid_request|invalid_grant/i.test(rawMessage)) {
+    return 'Authentication request was not recognized by Google. Please try again or use email.';
+  }
+
   if (isAuthError(error)) {
     switch (error.code) {
       case 'invalid_credentials':
@@ -122,5 +143,5 @@ export function getFriendlyAuthError(
     }
   }
 
-  return fallback;
+  return rawMessage && rawMessage.length < 120 ? rawMessage : fallback;
 }
