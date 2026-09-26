@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,58 +13,179 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
+import { makeRedirectUri } from 'expo-auth-session';
 import { supabase } from '../../lib/supabase';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+export type ForgotPasswordStep = 'request' | 'otp' | 'new-password' | 'success';
 
 interface ForgotPasswordScreenProps {
   onNavigateToLogin?: () => void;
+  initialStep?: ForgotPasswordStep;
 }
 
 export default function ForgotPasswordScreen({
   onNavigateToLogin,
+  initialStep = 'request',
 }: ForgotPasswordScreenProps) {
+  const [step, setStep] = useState<ForgotPasswordStep>(initialStep);
   const [email, setEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Input Refs for smooth focusing
+  const emailInputRef = useRef<TextInput>(null);
+  const otpInputRef = useRef<TextInput>(null);
+  const newPasswordRef = useRef<TextInput>(null);
+  const confirmPasswordRef = useRef<TextInput>(null);
+
+  // Focus tracking for golden highlight
+  const [focusedInput, setFocusedInput] = useState<string | null>(null);
 
   // Animations
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [slideAnim] = useState(() => new Animated.Value(25));
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
 
-  useEffect(() => {
+  const triggerAnimation = () => {
+    fadeAnim.setValue(0);
+    slideAnim.setValue(20);
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 600,
+        duration: 450,
         useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 600,
+        duration: 450,
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, slideAnim]);
+  };
 
+  useEffect(() => {
+    triggerAnimation();
+  }, [step]);
+
+  // Resend countdown timer
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown((prev) => prev - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
+  // =========================================================================
+  // STEP 1: Request Password Recovery Email / Code
+  // =========================================================================
   const handleSendRecovery = async () => {
-    if (!email.trim() || !email.includes('@')) {
-      setErrorMessage('Please enter a valid registered email.');
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErrorMessage('Please enter a valid registered email address.');
       return;
     }
 
     setErrorMessage('');
+    setSuccessMessage('');
     setIsLoading(true);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      const redirectUrl = makeRedirectUri({ scheme: 'mafia' });
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: redirectUrl,
+      });
+
       if (error) {
         setErrorMessage(error.message);
       } else {
-        setIsSubmitted(true);
+        setSuccessMessage(`Recovery dispatch sent to ${cleanEmail}`);
+        setResendCooldown(60);
+        setStep('otp');
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to send password reset email.';
+      const msg = err instanceof Error ? err.message : 'Failed to transmit recovery email.';
+      setErrorMessage(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // =========================================================================
+  // STEP 2: Verify OTP Code
+  // =========================================================================
+  const handleVerifyOtp = async () => {
+    const cleanOtp = otpCode.trim();
+    if (cleanOtp.length < 6) {
+      setErrorMessage('Please enter the complete verification code.');
+      return;
+    }
+
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: cleanOtp,
+        type: 'recovery',
+      });
+
+      if (error) {
+        setErrorMessage(error.message);
+      } else if (data.session || data.user) {
+        setSuccessMessage('Code verified. Set your new secret passcode.');
+        setStep('new-password');
+      } else {
+        setErrorMessage('Verification failed. Please try again.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to verify recovery code.';
+      setErrorMessage(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // =========================================================================
+  // STEP 3: Set New Password
+  // =========================================================================
+  const handleUpdatePassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      setErrorMessage('Passcode must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('Passcodes do not match. Please verify.');
+      return;
+    }
+
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsLoading(true);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        setErrorMessage(error.message);
+      } else {
+        setStep('success');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update passcode.';
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
@@ -71,14 +195,35 @@ export default function ForgotPasswordScreen({
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
+
+      {/* Atmospheric Background */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Svg width="100%" height="100%" preserveAspectRatio="none">
+          <Defs>
+            <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <Stop offset="0%" stopColor="#081220" />
+              <Stop offset="40%" stopColor="#060c16" />
+              <Stop offset="100%" stopColor="#04070d" />
+            </LinearGradient>
+            <LinearGradient id="ambientRed" x1="0%" y1="0%" x2="100%" y2="0%">
+              <Stop offset="0%" stopColor="#991b1b" stopOpacity="0.25" />
+              <Stop offset="50%" stopColor="#000000" stopOpacity="0" />
+            </LinearGradient>
+          </Defs>
+          <Rect x="0" y="0" width="100%" height="100%" fill="url(#bgGrad)" />
+          <Rect x="0" y="0" width="100%" height="100%" fill="url(#ambientRed)" />
+        </Svg>
+      </View>
+
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           <Animated.View
             style={[
@@ -89,31 +234,324 @@ export default function ForgotPasswordScreen({
               },
             ]}
           >
-            {/* Header */}
+            {/* Step Indicators */}
+            <View style={styles.stepIndicatorRow}>
+              <View style={[styles.stepDot, styles.stepDotActive]} />
+              <View
+                style={[
+                  styles.stepLine,
+                  (step === 'otp' || step === 'new-password' || step === 'success') &&
+                    styles.stepLineActive,
+                ]}
+              />
+              <View
+                style={[
+                  styles.stepDot,
+                  (step === 'otp' || step === 'new-password' || step === 'success') &&
+                    styles.stepDotActive,
+                ]}
+              />
+              <View
+                style={[
+                  styles.stepLine,
+                  (step === 'new-password' || step === 'success') && styles.stepLineActive,
+                ]}
+              />
+              <View
+                style={[
+                  styles.stepDot,
+                  (step === 'new-password' || step === 'success') && styles.stepDotActive,
+                ]}
+              />
+            </View>
+
+            {/* Header Icon & Title */}
             <View style={styles.header}>
               <View style={styles.iconCircle}>
-                <Text style={styles.iconEmoji}>{isSubmitted ? '📩' : '🔐'}</Text>
+                <Text style={styles.iconEmoji}>
+                  {step === 'request' && '🔐'}
+                  {step === 'otp' && '📬'}
+                  {step === 'new-password' && '🛡️'}
+                  {step === 'success' && '✅'}
+                </Text>
               </View>
-              <Text style={styles.title}>{isSubmitted ? 'EMAIL SENT' : 'FORGOT PASSWORD'}</Text>
+
+              <Text style={styles.title}>
+                {step === 'request' && 'RECOVER ACCESS'}
+                {step === 'otp' && 'ENTER CODE'}
+                {step === 'new-password' && 'NEW PASSCODE'}
+                {step === 'success' && 'ACCESS RESTORED'}
+              </Text>
+
               <Text style={styles.subtitle}>
-                {isSubmitted
-                  ? `A password reset link has been sent to ${email}`
-                  : 'Enter your registered email address to receive password reset instructions.'}
+                {step === 'request' &&
+                  'Enter your registered email to receive a secret recovery dispatch code.'}
+                {step === 'otp' &&
+                  `Enter the verification code sent to ${email || 'your email'}, or tap the link in your email.`}
+                {step === 'new-password' &&
+                  'Create a new secret passcode to secure your operative identity.'}
+                {step === 'success' &&
+                  'Your credentials have been securely updated. You can now log into the syndicate.'}
               </Text>
             </View>
 
-            {/* Error message */}
+            {/* Error & Info Banners */}
             {errorMessage ? (
               <View style={styles.errorBanner}>
                 <Text style={styles.errorText}>{errorMessage}</Text>
               </View>
             ) : null}
 
-            {isSubmitted ? (
+            {successMessage && step !== 'success' ? (
+              <View style={styles.infoBanner}>
+                <Text style={styles.infoText}>{successMessage}</Text>
+              </View>
+            ) : null}
+
+            {/* ============================================================= */}
+            {/* STEP 1: Email Form */}
+            {/* ============================================================= */}
+            {step === 'request' && (
+              <View style={styles.form}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>REGISTERED EMAIL</Text>
+                  <Pressable
+                    style={[
+                      styles.inputBox,
+                      focusedInput === 'email' && styles.inputBoxFocused,
+                    ]}
+                    onPress={() => emailInputRef.current?.focus()}
+                  >
+                    <TextInput
+                      ref={emailInputRef}
+                      style={styles.input}
+                      placeholder="operative@domain.com"
+                      placeholderTextColor="#64748b"
+                      value={email}
+                      onChangeText={(text) => {
+                        setEmail(text);
+                        if (errorMessage) setErrorMessage('');
+                      }}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      returnKeyType="done"
+                      onSubmitEditing={handleSendRecovery}
+                      onFocus={() => setFocusedInput('email')}
+                      onBlur={() => setFocusedInput(null)}
+                      selectionColor="#fbbf24"
+                      cursorColor="#fbbf24"
+                    />
+                  </Pressable>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
+                  onPress={handleSendRecovery}
+                  activeOpacity={0.85}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator color="#fde68a" size="small" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>SEND RECOVERY CODE</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.backButton}
+                  onPress={onNavigateToLogin}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.backText}>← Back to Login</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* ============================================================= */}
+            {/* STEP 2: OTP Verification Form */}
+            {/* ============================================================= */}
+            {step === 'otp' && (
+              <View style={styles.form}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>VERIFICATION CODE</Text>
+                  <Pressable
+                    style={[
+                      styles.inputBox,
+                      focusedInput === 'otp' && styles.inputBoxFocused,
+                    ]}
+                    onPress={() => otpInputRef.current?.focus()}
+                  >
+                    <TextInput
+                      ref={otpInputRef}
+                      style={[styles.input, styles.otpInput]}
+                      placeholder="Enter code"
+                      placeholderTextColor="#475569"
+                      value={otpCode}
+                      onChangeText={(text) => {
+                        setOtpCode(text.replace(/[^0-9]/g, ''));
+                        if (errorMessage) setErrorMessage('');
+                      }}
+                      keyboardType="number-pad"
+                      maxLength={10}
+                      returnKeyType="done"
+                      onSubmitEditing={handleVerifyOtp}
+                      onFocus={() => setFocusedInput('otp')}
+                      onBlur={() => setFocusedInput(null)}
+                      selectionColor="#fbbf24"
+                      cursorColor="#fbbf24"
+                    />
+                  </Pressable>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
+                  onPress={handleVerifyOtp}
+                  activeOpacity={0.85}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator color="#fde68a" size="small" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>VERIFY CODE</Text>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.resendRow}>
+                  <TouchableOpacity
+                    onPress={handleSendRecovery}
+                    disabled={resendCooldown > 0 || isLoading}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.resendText,
+                        resendCooldown > 0 && styles.resendTextDisabled,
+                      ]}
+                    >
+                      {resendCooldown > 0
+                        ? `Resend code in ${resendCooldown}s`
+                        : 'Resend recovery code'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.backButton}
+                  onPress={() => setStep('request')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.backText}>← Change Email</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* ============================================================= */}
+            {/* STEP 3: Set New Password Form */}
+            {/* ============================================================= */}
+            {step === 'new-password' && (
+              <View style={styles.form}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>NEW SECRET PASSCODE</Text>
+                  <Pressable
+                    style={[
+                      styles.inputBox,
+                      focusedInput === 'newPassword' && styles.inputBoxFocused,
+                    ]}
+                    onPress={() => newPasswordRef.current?.focus()}
+                  >
+                    <TextInput
+                      ref={newPasswordRef}
+                      style={styles.input}
+                      placeholder="Minimum 6 characters"
+                      placeholderTextColor="#64748b"
+                      value={newPassword}
+                      onChangeText={(text) => {
+                        setNewPassword(text);
+                        if (errorMessage) setErrorMessage('');
+                      }}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      returnKeyType="next"
+                      blurOnSubmit={false}
+                      onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+                      onFocus={() => setFocusedInput('newPassword')}
+                      onBlur={() => setFocusedInput(null)}
+                      selectionColor="#fbbf24"
+                      cursorColor="#fbbf24"
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPassword(!showPassword)}
+                      style={styles.eyeButton}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    >
+                      <Text style={styles.eyeText}>{showPassword ? '👁️' : '🔒'}</Text>
+                    </TouchableOpacity>
+                  </Pressable>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>CONFIRM NEW PASSCODE</Text>
+                  <Pressable
+                    style={[
+                      styles.inputBox,
+                      focusedInput === 'confirmPassword' && styles.inputBoxFocused,
+                    ]}
+                    onPress={() => confirmPasswordRef.current?.focus()}
+                  >
+                    <TextInput
+                      ref={confirmPasswordRef}
+                      style={styles.input}
+                      placeholder="Repeat new passcode"
+                      placeholderTextColor="#64748b"
+                      value={confirmPassword}
+                      onChangeText={(text) => {
+                        setConfirmPassword(text);
+                        if (errorMessage) setErrorMessage('');
+                      }}
+                      secureTextEntry={!showConfirmPassword}
+                      autoCapitalize="none"
+                      returnKeyType="done"
+                      onSubmitEditing={handleUpdatePassword}
+                      onFocus={() => setFocusedInput('confirmPassword')}
+                      onBlur={() => setFocusedInput(null)}
+                      selectionColor="#fbbf24"
+                      cursorColor="#fbbf24"
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                      style={styles.eyeButton}
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    >
+                      <Text style={styles.eyeText}>{showConfirmPassword ? '👁️' : '🔒'}</Text>
+                    </TouchableOpacity>
+                  </Pressable>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
+                  onPress={handleUpdatePassword}
+                  activeOpacity={0.85}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator color="#fde68a" size="small" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>SAVE NEW PASSCODE</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* ============================================================= */}
+            {/* STEP 4: Success Screen */}
+            {/* ============================================================= */}
+            {step === 'success' && (
               <View style={styles.successContainer}>
                 <View style={styles.tipBox}>
                   <Text style={styles.tipText}>
-                    Check your spam folder if the email does not arrive in a few minutes.
+                    Your password has been changed successfully. You can now log into your account
+                    with your new credentials.
                   </Text>
                 </View>
 
@@ -123,52 +561,6 @@ export default function ForgotPasswordScreen({
                   activeOpacity={0.85}
                 >
                   <Text style={styles.primaryButtonText}>RETURN TO LOGIN</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.resendButton}
-                  onPress={() => setIsSubmitted(false)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.resendText}>Try another email address</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.form}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Registered Email</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="user@example.com"
-                    placeholderTextColor="#475569"
-                    value={email}
-                    onChangeText={(text) => {
-                      setEmail(text);
-                      if (errorMessage) setErrorMessage('');
-                    }}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
-                  onPress={handleSendRecovery}
-                  activeOpacity={0.85}
-                  disabled={isLoading}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {isLoading ? 'SENDING LINK...' : 'SEND RESET LINK'}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.backButton}
-                  onPress={onNavigateToLogin}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.backText}>← Back to Login</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -182,7 +574,7 @@ export default function ForgotPasswordScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#07090e',
+    backgroundColor: '#070e1a',
   },
   keyboardView: {
     flex: 1,
@@ -190,150 +582,250 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 36,
+    paddingHorizontal: Math.max(14, SCREEN_WIDTH * 0.05),
+    paddingVertical: 24,
   },
   contentCard: {
-    backgroundColor: '#111622',
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    maxWidth: 440,
+    backgroundColor: 'rgba(11, 18, 32, 0.94)',
+    borderRadius: 22,
+    padding: SCREEN_WIDTH < 360 ? 16 : 24,
+    borderWidth: 1.5,
+    borderColor: 'rgba(253, 230, 138, 0.28)',
     width: '100%',
+    maxWidth: 420,
     alignSelf: 'center',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 12,
   },
-  header: {
-    alignItems: 'center',
-    marginBottom: 26,
-  },
-  iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#334155',
+
+  /* Step Dots */
+  stepIndicatorRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
   },
+  stepDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  stepDotActive: {
+    backgroundColor: '#f59e0b',
+    borderColor: '#fde68a',
+    shadowColor: '#f59e0b',
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+  },
+  stepLine: {
+    width: Math.min(28, SCREEN_WIDTH * 0.07),
+    height: 2,
+    backgroundColor: '#1e293b',
+    marginHorizontal: 4,
+  },
+  stepLineActive: {
+    backgroundColor: '#f59e0b',
+  },
+
+  /* Header */
+  header: {
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  iconCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#070d17',
+    borderWidth: 1.5,
+    borderColor: 'rgba(253, 230, 138, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    shadowColor: '#f59e0b',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+  },
   iconEmoji: {
-    fontSize: 28,
+    fontSize: 24,
   },
   title: {
-    color: '#f8fafc',
-    fontSize: 26,
+    color: '#fde68a',
+    fontSize: SCREEN_WIDTH < 360 ? 20 : 23,
     fontWeight: '900',
-    letterSpacing: 2,
-    marginBottom: 8,
+    letterSpacing: SCREEN_WIDTH < 360 ? 2 : 2.5,
+    marginBottom: 6,
     textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   subtitle: {
     color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: SCREEN_WIDTH < 360 ? 11.5 : 12.5,
+    fontWeight: '600',
     textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 8,
+    lineHeight: 17,
+    paddingHorizontal: 6,
   },
+
+  /* Banners */
   errorBanner: {
-    backgroundColor: 'rgba(225, 29, 72, 0.15)',
+    backgroundColor: 'rgba(220, 38, 38, 0.15)',
     borderWidth: 1,
-    borderColor: '#e11d48',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 16,
+    borderColor: '#dc2626',
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 14,
   },
   errorText: {
-    color: '#ff4d6d',
-    fontSize: 13,
+    color: '#fca5a5',
+    fontSize: 12.5,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  infoBanner: {
+    backgroundColor: 'rgba(2, 132, 199, 0.15)',
+    borderWidth: 1,
+    borderColor: '#0284c7',
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  infoText: {
+    color: '#7dd3fc',
+    fontSize: 12.5,
     fontWeight: '600',
     textAlign: 'center',
   },
+
+  /* Inputs & Form */
   form: {
     width: '100%',
   },
   inputGroup: {
-    marginBottom: 20,
+    marginBottom: 14,
   },
   inputLabel: {
     color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 8,
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: 5,
+    textTransform: 'uppercase',
+  },
+  inputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#070d17',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(217, 119, 6, 0.45)',
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
+    paddingHorizontal: 12,
+  },
+  inputBoxFocused: {
+    borderColor: '#f59e0b',
+    backgroundColor: '#091220',
+    shadowColor: '#f59e0b',
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
   },
   input: {
-    backgroundColor: '#0a0d14',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    color: '#f8fafc',
-    fontSize: 15,
+    flex: 1,
+    height: '100%',
+    color: '#ffffff',
+    fontSize: SCREEN_WIDTH < 360 ? 14 : 15,
+    fontWeight: '600',
+    paddingVertical: 0,
+    textAlignVertical: 'center',
   },
+  otpInput: {
+    fontSize: SCREEN_WIDTH < 360 ? 18 : 20,
+    letterSpacing: SCREEN_WIDTH < 360 ? 3 : 4,
+    textAlign: 'center',
+    fontWeight: '800',
+  },
+  eyeButton: {
+    padding: 6,
+  },
+  eyeText: {
+    fontSize: 16,
+  },
+
+  /* Buttons */
   primaryButton: {
-    backgroundColor: '#e11d48',
-    borderRadius: 12,
-    paddingVertical: 15,
+    backgroundColor: '#991b1b',
+    borderRadius: 14,
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
     alignItems: 'center',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 4 },
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fde68a',
+    marginTop: 6,
+    shadowColor: '#dc2626',
     shadowOpacity: 0.45,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 1.5,
+    color: '#fef08a',
+    fontSize: SCREEN_WIDTH < 360 ? 13.5 : 14.5,
+    fontWeight: '900',
+    letterSpacing: 2,
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+  },
+  resendRow: {
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  resendText: {
+    color: '#fde68a',
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  resendTextDisabled: {
+    color: '#64748b',
   },
   backButton: {
     alignItems: 'center',
-    marginTop: 20,
-    paddingVertical: 8,
+    marginTop: 16,
+    paddingVertical: 6,
   },
   backText: {
     color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
   },
+
+  /* Success Container */
   successContainer: {
     width: '100%',
   },
   tipBox: {
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderColor: 'rgba(16, 185, 129, 0.3)',
     padding: 14,
-    marginBottom: 24,
+    marginBottom: 18,
   },
   tipText: {
-    color: '#bae6fd',
-    fontSize: 13,
+    color: '#a7f3d0',
+    fontSize: 13.5,
     textAlign: 'center',
-    lineHeight: 18,
-  },
-  resendButton: {
-    alignItems: 'center',
-    marginTop: 16,
-    paddingVertical: 8,
-  },
-  resendText: {
-    color: '#38bdf8',
-    fontSize: 13,
+    lineHeight: 19,
     fontWeight: '600',
   },
 });

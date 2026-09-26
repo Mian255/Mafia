@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Animated,
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -12,6 +13,8 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../../lib/supabase';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
@@ -144,6 +147,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           <Animated.View
             style={[
@@ -282,16 +286,16 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 36,
+    paddingHorizontal: Math.max(14, SCREEN_WIDTH * 0.05),
+    paddingVertical: 24,
   },
   contentCard: {
     backgroundColor: '#111622',
-    borderRadius: 24,
-    padding: 24,
+    borderRadius: 22,
+    padding: SCREEN_WIDTH < 360 ? 16 : 24,
     borderWidth: 1,
     borderColor: '#1e293b',
-    maxWidth: 440,
+    maxWidth: 420,
     width: '100%',
     alignSelf: 'center',
     shadowColor: '#000000',
@@ -302,12 +306,12 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   crimsonDot: {
     width: 6,
@@ -325,15 +329,15 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: SCREEN_WIDTH < 360 ? 10 : 11,
     fontWeight: '800',
     letterSpacing: 2.5,
   },
   title: {
     color: '#f8fafc',
-    fontSize: 32,
+    fontSize: SCREEN_WIDTH < 360 ? 26 : 30,
     fontWeight: '900',
-    letterSpacing: 3,
+    letterSpacing: 2.5,
     marginBottom: 4,
     textShadowColor: 'rgba(56, 189, 248, 0.4)',
     textShadowOffset: { width: 0, height: 2 },
@@ -341,7 +345,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: '#64748b',
-    fontSize: 13,
+    fontSize: SCREEN_WIDTH < 360 ? 11.5 : 12.5,
     fontWeight: '500',
     textAlign: 'center',
   },
@@ -350,13 +354,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e11d48',
     borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 16,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 14,
   },
   errorText: {
     color: '#ff4d6d',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     textAlign: 'center',
   },
@@ -364,31 +368,32 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   inputLabel: {
     color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 6,
-    letterSpacing: 0.2,
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 5,
+    letterSpacing: 0.5,
   },
   input: {
     backgroundColor: '#0a0d14',
     borderWidth: 1,
     borderColor: '#1e293b',
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
     color: '#f8fafc',
-    fontSize: 15,
+    fontSize: SCREEN_WIDTH < 360 ? 14 : 15,
   },
   primaryButton: {
     backgroundColor: '#38bdf8',
     borderRadius: 12,
-    paddingVertical: 15,
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
     alignItems: 'center',
-    marginTop: 10,
+    justifyContent: 'center',
+    marginTop: 8,
     shadowColor: '#38bdf8',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.45,
@@ -400,7 +405,7 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#07090e',
-    fontSize: 15,
+    fontSize: SCREEN_WIDTH < 360 ? 13.5 : 14.5,
     fontWeight: '900',
     letterSpacing: 1.5,
   },
@@ -408,15 +413,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 22,
+    marginTop: 18,
   },
   footerText: {
     color: '#94a3b8',
-    fontSize: 14,
+    fontSize: SCREEN_WIDTH < 360 ? 12.5 : 13.5,
   },
   loginLink: {
     color: '#38bdf8',
-    fontSize: 14,
+    fontSize: SCREEN_WIDTH < 360 ? 13 : 14,
     fontWeight: '700',
   },
 });

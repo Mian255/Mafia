@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -6,6 +6,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -42,6 +43,9 @@ export default function LoginScreen({
   const [guestLoading, setGuestLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+
+  const emailInputRef = useRef<TextInput>(null);
+  const passwordInputRef = useRef<TextInput>(null);
 
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
@@ -123,24 +127,53 @@ export default function LoginScreen({
   const handleGuestLogin = async () => {
     setGuestLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInAnonymously();
+      const titles = [
+        'Shadow',
+        'Vito',
+        'Cipher',
+        'Falcon',
+        'Specter',
+        'Raven',
+        'Bullet',
+        'Enforcer',
+        'Outlaw',
+        'Ghost',
+        'Phantom',
+        'Blaze',
+      ];
+      const randomTitle = titles[Math.floor(Math.random() * titles.length)];
+      const randomCode = Math.floor(1000 + Math.random() * 9000);
+      const guestAlias = `Guest_${randomTitle}_${randomCode}`;
+
+      const { data, error } = await supabase.auth.signInAnonymously({
+        options: {
+          data: {
+            username: guestAlias,
+            is_guest: true,
+          },
+        },
+      });
+
       if (error) {
         if (onLoginSuccess) {
-          const guestAlias = `Guest_${Math.floor(1000 + Math.random() * 9000)}`;
           onLoginSuccess(guestAlias);
           return;
         }
         Alert.alert('Guest Login', error.message);
       } else if (data?.user) {
-        const guestAlias = `Guest_${data.user.id.substring(0, 4).toUpperCase()}`;
+        const uniqueAlias =
+          data.user.user_metadata?.username ||
+          `Guest_${randomTitle}_${data.user.id.substring(0, 4).toUpperCase()}`;
         if (onLoginSuccess) {
-          onLoginSuccess(guestAlias);
+          onLoginSuccess(uniqueAlias);
         }
       }
     } catch {
-      const guestAlias = `Guest_${Math.floor(1000 + Math.random() * 9000)}`;
+      const titles = ['Shadow', 'Vito', 'Cipher', 'Ghost', 'Specter'];
+      const fallbackTitle = titles[Math.floor(Math.random() * titles.length)];
+      const fallbackAlias = `Guest_${fallbackTitle}_${Math.floor(1000 + Math.random() * 9000)}`;
       if (onLoginSuccess) {
-        onLoginSuccess(guestAlias);
+        onLoginSuccess(fallbackAlias);
       }
     } finally {
       setGuestLoading(false);
@@ -196,7 +229,7 @@ export default function LoginScreen({
           {/* Form & Characters Combined Unit */}
           <View style={styles.formWrapper}>
             {/* Character Stage: Mafia & Detective Standing Right on Login Box */}
-            <View style={styles.charactersStage}>
+            <View style={styles.charactersStage} pointerEvents="none">
               <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
             </View>
 
@@ -205,8 +238,11 @@ export default function LoginScreen({
               {/* Username / Email Input */}
               <View style={styles.inputGroup}>
                 <Text style={styles.fieldLabel}>USERNAME / EMAIL</Text>
-                <View style={[styles.inputBox, focusedField === 'email' && styles.inputBoxFocused]}>
-                  <View style={styles.iconContainer}>
+                <Pressable
+                  style={[styles.inputBox, focusedField === 'email' && styles.inputBoxFocused]}
+                  onPress={() => emailInputRef.current?.focus()}
+                >
+                  <View style={styles.iconContainer} pointerEvents="none">
                     <Svg width="20" height="20" viewBox="0 0 24 24">
                       <Path
                         d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
@@ -215,6 +251,7 @@ export default function LoginScreen({
                     </Svg>
                   </View>
                   <TextInput
+                    ref={emailInputRef}
                     style={styles.textInput}
                     value={emailOrUsername}
                     onChangeText={setEmailOrUsername}
@@ -222,19 +259,25 @@ export default function LoginScreen({
                     placeholderTextColor="#64748b"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => passwordInputRef.current?.focus()}
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
+                    selectionColor="#fbbf24"
+                    cursorColor="#fbbf24"
                   />
-                </View>
+                </Pressable>
               </View>
 
               {/* Password Input */}
               <View style={styles.inputGroup}>
                 <Text style={styles.fieldLabel}>PASSWORD</Text>
-                <View
+                <Pressable
                   style={[styles.inputBox, focusedField === 'password' && styles.inputBoxFocused]}
+                  onPress={() => passwordInputRef.current?.focus()}
                 >
-                  <View style={styles.iconContainer}>
+                  <View style={styles.iconContainer} pointerEvents="none">
                     <Svg width="20" height="20" viewBox="0 0 24 24">
                       <Path
                         d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
@@ -243,6 +286,7 @@ export default function LoginScreen({
                     </Svg>
                   </View>
                   <TextInput
+                    ref={passwordInputRef}
                     style={styles.textInput}
                     value={password}
                     onChangeText={setPassword}
@@ -250,13 +294,18 @@ export default function LoginScreen({
                     placeholderTextColor="#64748b"
                     secureTextEntry={!showPassword}
                     autoCapitalize="none"
+                    returnKeyType="go"
+                    onSubmitEditing={handleLogin}
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
+                    selectionColor="#fbbf24"
+                    cursorColor="#fbbf24"
                   />
                   <TouchableOpacity
                     onPress={() => setShowPassword(!showPassword)}
                     style={styles.eyeButton}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                    activeOpacity={0.7}
                   >
                     <Svg width="20" height="20" viewBox="0 0 24 24">
                       {showPassword ? (
@@ -272,7 +321,7 @@ export default function LoginScreen({
                       )}
                     </Svg>
                   </TouchableOpacity>
-                </View>
+                </Pressable>
               </View>
 
               {/* Primary Login Button */}
@@ -399,9 +448,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: SCREEN_WIDTH * 0.06,
-    paddingTop: Platform.OS === 'ios' ? 44 : 20,
-    paddingBottom: 20,
+    paddingHorizontal: Math.max(14, SCREEN_WIDTH * 0.05),
+    paddingTop: Platform.OS === 'ios' ? 44 : 16,
+    paddingBottom: 24,
     alignItems: 'center',
     justifyContent: 'space-between',
   },
@@ -409,20 +458,20 @@ const styles = StyleSheet.create({
   /* Header Title */
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   titleText: {
     color: '#fde68a',
-    fontSize: 38,
+    fontSize: Math.min(SCREEN_WIDTH * 0.09, 36),
     fontWeight: '900',
-    letterSpacing: 6,
+    letterSpacing: Math.min(SCREEN_WIDTH * 0.015, 6),
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
     textShadowColor: 'rgba(217, 119, 6, 0.45)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 10,
   },
   goldDivider: {
-    width: 140,
+    width: Math.min(140, SCREEN_WIDTH * 0.35),
     height: 1,
     backgroundColor: 'rgba(253, 230, 138, 0.35)',
     marginVertical: 4,
@@ -437,15 +486,16 @@ const styles = StyleSheet.create({
   },
   subtitleText: {
     color: '#94a3b8',
-    fontSize: 10.5,
+    fontSize: SCREEN_WIDTH < 360 ? 9.5 : 10.5,
     fontWeight: '700',
-    letterSpacing: 2.5,
+    letterSpacing: SCREEN_WIDTH < 360 ? 1.8 : 2.5,
     textTransform: 'uppercase',
   },
 
   /* Form & Characters Container */
   formWrapper: {
     width: '100%',
+    maxWidth: 420,
     alignItems: 'center',
     marginVertical: 2,
   },
@@ -468,9 +518,9 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: 'rgba(11, 18, 32, 0.94)',
     borderRadius: 22,
-    paddingHorizontal: 20,
-    paddingTop: 22,
-    paddingBottom: 20,
+    paddingHorizontal: SCREEN_WIDTH < 360 ? 14 : 20,
+    paddingTop: SCREEN_WIDTH < 360 ? 16 : 22,
+    paddingBottom: SCREEN_WIDTH < 360 ? 16 : 20,
     borderWidth: 1.5,
     borderColor: 'rgba(253, 230, 138, 0.28)',
     shadowColor: '#000000',
@@ -480,14 +530,14 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   inputGroup: {
-    marginBottom: 14,
+    marginBottom: 12,
   },
   fieldLabel: {
     color: '#cbd5e1',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     letterSpacing: 2,
-    marginBottom: 6,
+    marginBottom: 5,
     textTransform: 'uppercase',
   },
   inputBox: {
@@ -497,8 +547,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: 'rgba(217, 119, 6, 0.45)',
-    height: 52,
-    paddingHorizontal: 14,
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
+    paddingHorizontal: 12,
   },
   inputBoxFocused: {
     borderColor: '#f59e0b',
@@ -509,17 +559,19 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
   },
   iconContainer: {
-    width: 26,
+    width: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 8,
   },
   textInput: {
     flex: 1,
+    height: '100%',
     color: '#ffffff',
-    fontSize: 15,
+    fontSize: SCREEN_WIDTH < 360 ? 14 : 15,
     fontWeight: '600',
     paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   eyeButton: {
     padding: 6,
@@ -529,7 +581,7 @@ const styles = StyleSheet.create({
 
   /* Buttons */
   loginButton: {
-    height: 52,
+    height: Math.max(48, Math.min(52, SCREEN_WIDTH * 0.13)),
     borderRadius: 14,
     overflow: 'hidden',
     alignItems: 'center',
@@ -552,18 +604,18 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: '#fef08a',
-    fontSize: 17,
+    fontSize: SCREEN_WIDTH < 360 ? 15 : 16.5,
     fontWeight: '900',
-    letterSpacing: 3,
+    letterSpacing: 2.5,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   googleButton: {
-    height: 48,
+    height: Math.max(44, Math.min(48, SCREEN_WIDTH * 0.12)),
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ffffff',
-    marginTop: 10,
+    marginTop: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     shadowColor: '#000000',
@@ -580,14 +632,14 @@ const styles = StyleSheet.create({
   },
   googleButtonText: {
     color: '#1e293b',
-    fontSize: 13,
+    fontSize: SCREEN_WIDTH < 360 ? 11.5 : 12.5,
     fontWeight: '800',
-    letterSpacing: 1.5,
+    letterSpacing: 1.2,
   },
   orDividerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 12,
+    marginVertical: 10,
   },
   orLine: {
     flex: 1,
@@ -596,13 +648,13 @@ const styles = StyleSheet.create({
   },
   orText: {
     color: '#64748b',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     letterSpacing: 2,
-    marginHorizontal: 12,
+    marginHorizontal: 10,
   },
   guestButton: {
-    height: 44,
+    height: Math.max(42, Math.min(44, SCREEN_WIDTH * 0.11)),
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -612,26 +664,27 @@ const styles = StyleSheet.create({
   },
   guestButtonText: {
     color: '#cbd5e1',
-    fontSize: 12,
+    fontSize: SCREEN_WIDTH < 360 ? 11 : 12,
     fontWeight: '700',
-    letterSpacing: 2,
+    letterSpacing: 1.8,
   },
 
   /* Footer */
   footerContainer: {
     width: '100%',
+    maxWidth: 420,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 6,
-    marginTop: 12,
+    paddingHorizontal: 4,
+    marginTop: 10,
   },
   forgotTouch: {
     paddingVertical: 6,
   },
   forgotText: {
     color: '#fde68a',
-    fontSize: 12.5,
+    fontSize: SCREEN_WIDTH < 360 ? 11.5 : 12.5,
     fontWeight: '600',
     letterSpacing: 0.5,
   },
@@ -640,14 +693,14 @@ const styles = StyleSheet.create({
   },
   needAccountText: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: SCREEN_WIDTH < 360 ? 10 : 11,
     fontWeight: '500',
     marginBottom: 2,
   },
   signUpText: {
     color: '#fde68a',
-    fontSize: 15,
+    fontSize: SCREEN_WIDTH < 360 ? 13.5 : 15,
     fontWeight: '900',
-    letterSpacing: 1.5,
+    letterSpacing: 1.2,
   },
 });

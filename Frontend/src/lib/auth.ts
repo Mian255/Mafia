@@ -9,7 +9,7 @@ try {
   // Ignored in headless/initial contexts
 }
 
-const createSessionFromUrl = async (url: string) => {
+export const createSessionFromUrl = async (url: string) => {
   const { params, errorCode } = QueryParams.getQueryParams(url);
   if (errorCode) {
     throw new Error(errorCode);
