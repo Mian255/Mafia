@@ -18,6 +18,7 @@
     "eslint": "^9.39.5",
     "eslint-config-expo": "^57.0.2",
     "prettier": "^3.9.8",
+    "supabase": "^2.118.0",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -31,7 +32,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "build:check": "tsc --noEmit"
+    "build:check": "tsc --noEmit",
+    "types:update": "supabase gen types typescript --project-id cfutaueuomfqkmqystkk > src/types/database.ts",
+    "types:generate": "supabase gen types typescript --project-id cfutaueuomfqkmqystkk > src/types/database.types.ts",
+    "supabase:login": "supabase login",
+    "supabase:link": "supabase link --project-ref cfutaueuomfqkmqystkk"
   },
   "private": true
 }
