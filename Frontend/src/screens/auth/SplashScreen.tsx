@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -28,14 +28,23 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
   const [progressAnim] = useState(() => new Animated.Value(0));
   const [progressPercent, setProgressPercent] = useState(0);
 
+  // Keep the latest onFinish in a ref: the parent re-renders during the splash (session check),
+  // and a new onFinish identity must not restart the whole animation sequence and exit timer.
+  const onFinishRef = useRef(onFinish);
+  useEffect(() => {
+    onFinishRef.current = onFinish;
+  }, [onFinish]);
+
   useEffect(() => {
     // Track numeric percentage for live text display
     const listenerId = progressAnim.addListener(({ value }) => {
-      setProgressPercent(Math.min(100, Math.floor(value * 100)));
+      // Functional update that bails out when the integer percent hasn't changed.
+      const next = Math.min(100, Math.floor(value * 100));
+      setProgressPercent((prev) => (prev === next ? prev : next));
     });
 
     // 1. Initial smooth entrance animation
-    Animated.sequence([
+    const entrance = Animated.sequence([
       Animated.timing(screenOpacity, {
         toValue: 1,
         duration: 600,
@@ -62,27 +71,30 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
           useNativeDriver: false,
         }),
       ]),
-    ]).start();
+    ]);
+    entrance.start();
 
     // 2. Smooth fade-out exit when loading completes
+    let exit: Animated.CompositeAnimation | null = null;
     const exitTimer = setTimeout(() => {
-      Animated.timing(screenOpacity, {
+      exit = Animated.timing(screenOpacity, {
         toValue: 0,
         duration: 500,
         easing: Easing.in(Easing.ease),
         useNativeDriver: true,
-      }).start(() => {
-        if (onFinish) {
-          onFinish();
-        }
+      });
+      exit.start(({ finished }) => {
+        if (finished) onFinishRef.current?.();
       });
     }, durationMs - 450);
 
     return () => {
       progressAnim.removeListener(listenerId);
       clearTimeout(exitTimer);
+      entrance.stop();
+      exit?.stop();
     };
-  }, [durationMs, onFinish, screenOpacity, contentFadeAnim, contentSlideAnim, progressAnim]);
+  }, [durationMs, screenOpacity, contentFadeAnim, contentSlideAnim, progressAnim]);
 
   return (
     <Animated.View style={[styles.container, { opacity: screenOpacity }]}>

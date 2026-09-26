@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -17,6 +17,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { makeRedirectUri } from 'expo-auth-session';
 import { supabase } from '../../lib/supabase';
+import { getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -43,20 +44,23 @@ export default function ForgotPasswordScreen({
   const [isLoading, setIsLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
-  // Input Refs for smooth focusing
+  // Input Refs
   const emailInputRef = useRef<TextInput>(null);
   const otpInputRef = useRef<TextInput>(null);
   const newPasswordRef = useRef<TextInput>(null);
   const confirmPasswordRef = useRef<TextInput>(null);
 
-  // Focus tracking for golden highlight
+  // Focus tracking
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
+
+  // Synchronous guard
+  const requestInFlight = useRef(false);
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
 
-  const triggerAnimation = () => {
+  const triggerAnimation = useCallback(() => {
     fadeAnim.setValue(0);
     slideAnim.setValue(20);
     Animated.parallel([
@@ -71,11 +75,15 @@ export default function ForgotPasswordScreen({
         useNativeDriver: true,
       }),
     ]).start();
-  };
+  }, [fadeAnim, slideAnim]);
+
+  useEffect(() => {
+    setStep(initialStep);
+  }, [initialStep]);
 
   useEffect(() => {
     triggerAnimation();
-  }, [step]);
+  }, [step, triggerAnimation]);
 
   // Resend countdown timer
   useEffect(() => {
@@ -85,19 +93,20 @@ export default function ForgotPasswordScreen({
     }
   }, [resendCooldown]);
 
-  // =========================================================================
-  // STEP 1: Request Password Recovery Email / Code
-  // =========================================================================
+  // STEP 1: Request Recovery Email / Code
   const handleSendRecovery = async () => {
+    if (requestInFlight.current) return;
     const cleanEmail = email.trim();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErrorMessage('Please enter a valid registered email address.');
+    const emailErr = validateEmail(cleanEmail);
+    if (emailErr) {
+      setErrorMessage(emailErr);
       return;
     }
 
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
+    requestInFlight.current = true;
 
     try {
       const redirectUrl = makeRedirectUri({ scheme: 'mafia' });
@@ -106,24 +115,23 @@ export default function ForgotPasswordScreen({
       });
 
       if (error) {
-        setErrorMessage(error.message);
+        setErrorMessage(getFriendlyAuthError(error, 'Failed to send recovery email.'));
       } else {
         setSuccessMessage(`Recovery dispatch sent to ${cleanEmail}`);
         setResendCooldown(60);
         setStep('otp');
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to transmit recovery email.';
-      setErrorMessage(msg);
+      setErrorMessage(getFriendlyAuthError(err, 'Failed to transmit recovery email.'));
     } finally {
+      requestInFlight.current = false;
       setIsLoading(false);
     }
   };
 
-  // =========================================================================
   // STEP 2: Verify OTP Code
-  // =========================================================================
   const handleVerifyOtp = async () => {
+    if (requestInFlight.current) return;
     const cleanOtp = otpCode.trim();
     if (cleanOtp.length < 6) {
       setErrorMessage('Please enter the complete verification code.');
@@ -133,6 +141,7 @@ export default function ForgotPasswordScreen({
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
+    requestInFlight.current = true;
 
     try {
       const { data, error } = await supabase.auth.verifyOtp({
@@ -142,7 +151,7 @@ export default function ForgotPasswordScreen({
       });
 
       if (error) {
-        setErrorMessage(error.message);
+        setErrorMessage(getFriendlyAuthError(error, 'Invalid verification code.'));
       } else if (data.session || data.user) {
         setSuccessMessage('Code verified. Set your new secret passcode.');
         setStep('new-password');
@@ -150,17 +159,16 @@ export default function ForgotPasswordScreen({
         setErrorMessage('Verification failed. Please try again.');
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to verify recovery code.';
-      setErrorMessage(msg);
+      setErrorMessage(getFriendlyAuthError(err, 'Failed to verify recovery code.'));
     } finally {
+      requestInFlight.current = false;
       setIsLoading(false);
     }
   };
 
-  // =========================================================================
   // STEP 3: Set New Password
-  // =========================================================================
   const handleUpdatePassword = async () => {
+    if (requestInFlight.current) return;
     if (!newPassword || newPassword.length < 6) {
       setErrorMessage('Passcode must be at least 6 characters long.');
       return;
@@ -173,6 +181,7 @@ export default function ForgotPasswordScreen({
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
+    requestInFlight.current = true;
 
     try {
       const { error } = await supabase.auth.updateUser({
@@ -180,14 +189,14 @@ export default function ForgotPasswordScreen({
       });
 
       if (error) {
-        setErrorMessage(error.message);
+        setErrorMessage(getFriendlyAuthError(error, 'Failed to update passcode.'));
       } else {
         setStep('success');
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to update passcode.';
-      setErrorMessage(msg);
+      setErrorMessage(getFriendlyAuthError(err, 'Failed to update passcode.'));
     } finally {
+      requestInFlight.current = false;
       setIsLoading(false);
     }
   };
@@ -298,7 +307,9 @@ export default function ForgotPasswordScreen({
             {/* Error & Info Banners */}
             {errorMessage ? (
               <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{errorMessage}</Text>
+                <Text style={styles.errorText} accessibilityLiveRegion="polite">
+                  {errorMessage}
+                </Text>
               </View>
             ) : null}
 
@@ -308,13 +319,11 @@ export default function ForgotPasswordScreen({
               </View>
             ) : null}
 
-            {/* ============================================================= */}
-            {/* STEP 1: Email Form */}
-            {/* ============================================================= */}
+            {/* STEP 1: EMAIL INPUT */}
             {step === 'request' && (
               <View style={styles.form}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>REGISTERED EMAIL</Text>
+                  <Text style={styles.inputLabel}>Registered Email</Text>
                   <Pressable
                     style={[
                       styles.inputBox,
@@ -326,21 +335,21 @@ export default function ForgotPasswordScreen({
                       ref={emailInputRef}
                       style={styles.input}
                       placeholder="operative@domain.com"
-                      placeholderTextColor="#64748b"
+                      placeholderTextColor="#475569"
                       value={email}
-                      onChangeText={(text) => {
-                        setEmail(text);
-                        if (errorMessage) setErrorMessage('');
+                      onChangeText={(t) => {
+                        setEmail(t);
+                        setErrorMessage('');
                       }}
+                      onFocus={() => setFocusedInput('email')}
+                      onBlur={() => setFocusedInput(null)}
                       keyboardType="email-address"
                       autoCapitalize="none"
                       autoCorrect={false}
-                      returnKeyType="done"
+                      autoComplete="email"
+                      returnKeyType="send"
                       onSubmitEditing={handleSendRecovery}
-                      onFocus={() => setFocusedInput('email')}
-                      onBlur={() => setFocusedInput(null)}
-                      selectionColor="#fbbf24"
-                      cursorColor="#fbbf24"
+                      editable={!isLoading}
                     />
                   </Pressable>
                 </View>
@@ -351,16 +360,20 @@ export default function ForgotPasswordScreen({
                   activeOpacity={0.85}
                   disabled={isLoading}
                 >
-                  {isLoading ? (
-                    <ActivityIndicator color="#fde68a" size="small" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>SEND RECOVERY CODE</Text>
-                  )}
+                  <View style={styles.buttonContent}>
+                    {isLoading ? (
+                      <ActivityIndicator color="#fef08a" size="small" style={styles.buttonSpinner} />
+                    ) : null}
+                    <Text style={styles.primaryButtonText}>
+                      {isLoading ? 'TRANSMITTING...' : 'SEND RECOVERY CODE'}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.backButton}
                   onPress={onNavigateToLogin}
+                  disabled={isLoading}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.backText}>← Back to Login</Text>
@@ -368,13 +381,11 @@ export default function ForgotPasswordScreen({
               </View>
             )}
 
-            {/* ============================================================= */}
-            {/* STEP 2: OTP Verification Form */}
-            {/* ============================================================= */}
+            {/* STEP 2: OTP INPUT */}
             {step === 'otp' && (
               <View style={styles.form}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>VERIFICATION CODE</Text>
+                  <Text style={styles.inputLabel}>Verification Code (6-10 Digits)</Text>
                   <Pressable
                     style={[
                       styles.inputBox,
@@ -385,21 +396,20 @@ export default function ForgotPasswordScreen({
                     <TextInput
                       ref={otpInputRef}
                       style={[styles.input, styles.otpInput]}
-                      placeholder="Enter code"
-                      placeholderTextColor="#475569"
+                      placeholder="123456789"
+                      placeholderTextColor="#334155"
                       value={otpCode}
-                      onChangeText={(text) => {
-                        setOtpCode(text.replace(/[^0-9]/g, ''));
-                        if (errorMessage) setErrorMessage('');
+                      onChangeText={(t) => {
+                        setOtpCode(t);
+                        setErrorMessage('');
                       }}
-                      keyboardType="number-pad"
-                      maxLength={10}
-                      returnKeyType="done"
-                      onSubmitEditing={handleVerifyOtp}
                       onFocus={() => setFocusedInput('otp')}
                       onBlur={() => setFocusedInput(null)}
-                      selectionColor="#fbbf24"
-                      cursorColor="#fbbf24"
+                      keyboardType="number-pad"
+                      maxLength={12}
+                      returnKeyType="done"
+                      onSubmitEditing={handleVerifyOtp}
+                      editable={!isLoading}
                     />
                   </Pressable>
                 </View>
@@ -410,49 +420,54 @@ export default function ForgotPasswordScreen({
                   activeOpacity={0.85}
                   disabled={isLoading}
                 >
-                  {isLoading ? (
-                    <ActivityIndicator color="#fde68a" size="small" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>VERIFY CODE</Text>
-                  )}
+                  <View style={styles.buttonContent}>
+                    {isLoading ? (
+                      <ActivityIndicator color="#fef08a" size="small" style={styles.buttonSpinner} />
+                    ) : null}
+                    <Text style={styles.primaryButtonText}>
+                      {isLoading ? 'VERIFYING...' : 'CONFIRM CODE'}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
 
-                <View style={styles.resendRow}>
-                  <TouchableOpacity
-                    onPress={handleSendRecovery}
-                    disabled={resendCooldown > 0 || isLoading}
-                    activeOpacity={0.7}
+                <TouchableOpacity
+                  style={styles.resendRow}
+                  onPress={() => {
+                    if (resendCooldown === 0) {
+                      handleSendRecovery();
+                    }
+                  }}
+                  disabled={resendCooldown > 0 || isLoading}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.resendText,
+                      resendCooldown > 0 && styles.resendTextDisabled,
+                    ]}
                   >
-                    <Text
-                      style={[
-                        styles.resendText,
-                        resendCooldown > 0 && styles.resendTextDisabled,
-                      ]}
-                    >
-                      {resendCooldown > 0
-                        ? `Resend code in ${resendCooldown}s`
-                        : 'Resend recovery code'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                    {resendCooldown > 0
+                      ? `Resend code in ${resendCooldown}s`
+                      : 'Resend Verification Code'}
+                  </Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.backButton}
                   onPress={() => setStep('request')}
+                  disabled={isLoading}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.backText}>← Change Email</Text>
+                  <Text style={styles.backText}>← Change Email Address</Text>
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* ============================================================= */}
-            {/* STEP 3: Set New Password Form */}
-            {/* ============================================================= */}
+            {/* STEP 3: NEW PASSWORD */}
             {step === 'new-password' && (
               <View style={styles.form}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>NEW SECRET PASSCODE</Text>
+                  <Text style={styles.inputLabel}>New Passcode</Text>
                   <Pressable
                     style={[
                       styles.inputBox,
@@ -464,26 +479,23 @@ export default function ForgotPasswordScreen({
                       ref={newPasswordRef}
                       style={styles.input}
                       placeholder="Minimum 6 characters"
-                      placeholderTextColor="#64748b"
+                      placeholderTextColor="#475569"
                       value={newPassword}
-                      onChangeText={(text) => {
-                        setNewPassword(text);
-                        if (errorMessage) setErrorMessage('');
+                      onChangeText={(t) => {
+                        setNewPassword(t);
+                        setErrorMessage('');
                       }}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                      returnKeyType="next"
-                      blurOnSubmit={false}
-                      onSubmitEditing={() => confirmPasswordRef.current?.focus()}
                       onFocus={() => setFocusedInput('newPassword')}
                       onBlur={() => setFocusedInput(null)}
-                      selectionColor="#fbbf24"
-                      cursorColor="#fbbf24"
+                      secureTextEntry={!showPassword}
+                      returnKeyType="next"
+                      onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+                      editable={!isLoading}
                     />
                     <TouchableOpacity
-                      onPress={() => setShowPassword(!showPassword)}
                       style={styles.eyeButton}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      onPress={() => setShowPassword((prev) => !prev)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
                       <Text style={styles.eyeText}>{showPassword ? '👁️' : '🔒'}</Text>
                     </TouchableOpacity>
@@ -491,7 +503,7 @@ export default function ForgotPasswordScreen({
                 </View>
 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>CONFIRM NEW PASSCODE</Text>
+                  <Text style={styles.inputLabel}>Confirm Passcode</Text>
                   <Pressable
                     style={[
                       styles.inputBox,
@@ -502,26 +514,24 @@ export default function ForgotPasswordScreen({
                     <TextInput
                       ref={confirmPasswordRef}
                       style={styles.input}
-                      placeholder="Repeat new passcode"
-                      placeholderTextColor="#64748b"
+                      placeholder="Re-enter passcode"
+                      placeholderTextColor="#475569"
                       value={confirmPassword}
-                      onChangeText={(text) => {
-                        setConfirmPassword(text);
-                        if (errorMessage) setErrorMessage('');
+                      onChangeText={(t) => {
+                        setConfirmPassword(t);
+                        setErrorMessage('');
                       }}
-                      secureTextEntry={!showConfirmPassword}
-                      autoCapitalize="none"
-                      returnKeyType="done"
-                      onSubmitEditing={handleUpdatePassword}
                       onFocus={() => setFocusedInput('confirmPassword')}
                       onBlur={() => setFocusedInput(null)}
-                      selectionColor="#fbbf24"
-                      cursorColor="#fbbf24"
+                      secureTextEntry={!showConfirmPassword}
+                      returnKeyType="done"
+                      onSubmitEditing={handleUpdatePassword}
+                      editable={!isLoading}
                     />
                     <TouchableOpacity
-                      onPress={() => setShowConfirmPassword(!showConfirmPassword)}
                       style={styles.eyeButton}
-                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      onPress={() => setShowConfirmPassword((prev) => !prev)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
                       <Text style={styles.eyeText}>{showConfirmPassword ? '👁️' : '🔒'}</Text>
                     </TouchableOpacity>
@@ -534,23 +544,33 @@ export default function ForgotPasswordScreen({
                   activeOpacity={0.85}
                   disabled={isLoading}
                 >
-                  {isLoading ? (
-                    <ActivityIndicator color="#fde68a" size="small" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>SAVE NEW PASSCODE</Text>
-                  )}
+                  <View style={styles.buttonContent}>
+                    {isLoading ? (
+                      <ActivityIndicator color="#fef08a" size="small" style={styles.buttonSpinner} />
+                    ) : null}
+                    <Text style={styles.primaryButtonText}>
+                      {isLoading ? 'UPDATING...' : 'SECURE NEW PASSCODE'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.backButton}
+                  onPress={onNavigateToLogin}
+                  disabled={isLoading}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.backText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* ============================================================= */}
-            {/* STEP 4: Success Screen */}
-            {/* ============================================================= */}
+            {/* STEP 4: SUCCESS */}
             {step === 'success' && (
               <View style={styles.successContainer}>
                 <View style={styles.tipBox}>
                   <Text style={styles.tipText}>
-                    Your password has been changed successfully. You can now log into your account
+                    Your operative passcode has been changed. You can now access syndicate channels
                     with your new credentials.
                   </Text>
                 </View>
@@ -586,102 +606,95 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
   },
   contentCard: {
-    backgroundColor: 'rgba(11, 18, 32, 0.94)',
-    borderRadius: 22,
-    padding: SCREEN_WIDTH < 360 ? 16 : 24,
+    backgroundColor: 'rgba(11, 20, 38, 0.92)',
+    borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(253, 230, 138, 0.28)',
-    width: '100%',
-    maxWidth: 420,
-    alignSelf: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.8,
-    shadowRadius: 20,
+    borderColor: 'rgba(217, 119, 6, 0.35)',
+    paddingHorizontal: Math.max(16, SCREEN_WIDTH * 0.05),
+    paddingVertical: 22,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.7,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
     elevation: 12,
   },
-
-  /* Step Dots */
   stepIndicatorRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
+    width: '100%',
   },
   stepDot: {
     width: 9,
     height: 9,
-    borderRadius: 4.5,
-    backgroundColor: '#1e293b',
+    borderRadius: 5,
+    backgroundColor: 'rgba(100, 116, 139, 0.4)',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#475569',
   },
   stepDotActive: {
     backgroundColor: '#f59e0b',
     borderColor: '#fde68a',
     shadowColor: '#f59e0b',
     shadowOpacity: 0.8,
-    shadowRadius: 6,
+    shadowRadius: 5,
+    elevation: 4,
   },
   stepLine: {
-    width: Math.min(28, SCREEN_WIDTH * 0.07),
+    width: 28,
     height: 2,
-    backgroundColor: '#1e293b',
+    backgroundColor: 'rgba(100, 116, 139, 0.3)',
     marginHorizontal: 4,
   },
   stepLineActive: {
     backgroundColor: '#f59e0b',
   },
-
-  /* Header */
   header: {
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: 16,
+    width: '100%',
   },
   iconCircle: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: '#070d17',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(153, 27, 27, 0.25)',
     borderWidth: 1.5,
-    borderColor: 'rgba(253, 230, 138, 0.3)',
+    borderColor: 'rgba(217, 119, 6, 0.6)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
-    shadowColor: '#f59e0b',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
+    marginBottom: 10,
   },
   iconEmoji: {
     fontSize: 24,
   },
   title: {
-    color: '#fde68a',
-    fontSize: SCREEN_WIDTH < 360 ? 20 : 23,
+    fontSize: SCREEN_WIDTH < 360 ? 18 : 20,
     fontWeight: '900',
-    letterSpacing: SCREEN_WIDTH < 360 ? 2 : 2.5,
-    marginBottom: 6,
+    color: '#fef08a',
+    letterSpacing: 2.5,
     textAlign: 'center',
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+    marginBottom: 6,
   },
   subtitle: {
+    fontSize: SCREEN_WIDTH < 360 ? 12 : 13,
     color: '#94a3b8',
-    fontSize: SCREEN_WIDTH < 360 ? 11.5 : 12.5,
-    fontWeight: '600',
     textAlign: 'center',
-    lineHeight: 17,
-    paddingHorizontal: 6,
+    lineHeight: 18,
+    paddingHorizontal: 8,
   },
-
-  /* Banners */
   errorBanner: {
-    backgroundColor: 'rgba(220, 38, 38, 0.15)',
+    backgroundColor: 'rgba(153, 27, 27, 0.3)',
     borderWidth: 1,
-    borderColor: '#dc2626',
+    borderColor: '#ef4444',
     borderRadius: 12,
     paddingVertical: 9,
     paddingHorizontal: 12,
     marginBottom: 14,
+    width: '100%',
   },
   errorText: {
     color: '#fca5a5',
@@ -697,6 +710,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 12,
     marginBottom: 14,
+    width: '100%',
   },
   infoText: {
     color: '#7dd3fc',
@@ -704,8 +718,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-
-  /* Inputs & Form */
   form: {
     width: '100%',
   },
@@ -746,6 +758,14 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     textAlignVertical: 'center',
   },
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonSpinner: {
+    marginRight: 8,
+  },
   otpInput: {
     fontSize: SCREEN_WIDTH < 360 ? 18 : 20,
     letterSpacing: SCREEN_WIDTH < 360 ? 3 : 4,
@@ -758,8 +778,6 @@ const styles = StyleSheet.create({
   eyeText: {
     fontSize: 16,
   },
-
-  /* Buttons */
   primaryButton: {
     backgroundColor: '#991b1b',
     borderRadius: 14,
@@ -808,8 +826,6 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '700',
   },
-
-  /* Success Container */
   successContainer: {
     width: '100%',
   },

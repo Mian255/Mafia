@@ -45,6 +45,7 @@ export interface Database {
           avatar_url?: string | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
       rooms: {
         Row: {
@@ -79,6 +80,7 @@ export interface Database {
           max_players?: number;
           updated_at?: string;
         };
+        Relationships: [];
       };
       room_players: {
         Row: {
@@ -107,6 +109,7 @@ export interface Database {
           is_host?: boolean;
           last_seen_at?: string;
         };
+        Relationships: [];
       };
       room_settings: {
         Row: {
@@ -147,6 +150,7 @@ export interface Database {
           reveal_role_on_death?: boolean;
           updated_at?: string;
         };
+        Relationships: [];
       };
       friend_requests: {
         Row: {
@@ -166,6 +170,7 @@ export interface Database {
         Update: {
           status?: FriendRequestStatus;
         };
+        Relationships: [];
       };
       friendships: {
         Row: {
@@ -184,6 +189,7 @@ export interface Database {
           user_id?: string;
           friend_id?: string;
         };
+        Relationships: [];
       };
       blocked_users: {
         Row: {
@@ -202,6 +208,7 @@ export interface Database {
           blocker_id?: string;
           blocked_id?: string;
         };
+        Relationships: [];
       };
       reports: {
         Row: {
@@ -224,6 +231,7 @@ export interface Database {
           reason?: string;
           details?: string | null;
         };
+        Relationships: [];
       };
       games: {
         Row: {
@@ -253,6 +261,7 @@ export interface Database {
           winner?: GameWinner;
           updated_at?: string;
         };
+        Relationships: [];
       };
       game_players: {
         Row: {
@@ -283,6 +292,7 @@ export interface Database {
           death_phase?: string | null;
           death_reason?: string | null;
         };
+        Relationships: [];
       };
       night_actions: {
         Row: {
@@ -306,6 +316,7 @@ export interface Database {
         Update: {
           target_id?: string;
         };
+        Relationships: [];
       };
       votes: {
         Row: {
@@ -327,6 +338,7 @@ export interface Database {
         Update: {
           target_id?: string | null;
         };
+        Relationships: [];
       };
       game_events: {
         Row: {
@@ -347,6 +359,7 @@ export interface Database {
           event_type?: string;
           payload?: Json;
         };
+        Relationships: [];
       };
       messages: {
         Row: {
@@ -370,6 +383,7 @@ export interface Database {
         Update: {
           content?: string;
         };
+        Relationships: [];
       };
       user_stats: {
         Row: {
@@ -401,7 +415,12 @@ export interface Database {
           detective_wins?: number;
           updated_at?: string;
         };
+        Relationships: [];
       };
     };
+    Views: { [_ in never]: never };
+    Functions: { [_ in never]: never };
+    Enums: { [_ in never]: never };
+    CompositeTypes: { [_ in never]: never };
   };
 }

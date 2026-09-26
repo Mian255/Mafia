@@ -1,2 +1,1 @@
-// Custom React hooks will be exported from here
-export {};
+export * from './useStableCallback';
