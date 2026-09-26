@@ -1,0 +1,634 @@
+﻿
+
+
+Mafia Game: Task Split (Abaid and Jawad)
+
+Ticket details (description and &quot;Done when&quot;) are in mafia-tickets.md. This file only says who does what and in what order.
+
+
+Roles
+
+Abaid: Screens, UI components, navigation, client-side logic.
+
+Jawad: Supabase schema, RLS, Edge Functions, accounts and settings, builds and releases, and any ticket that mixes frontend and backend.
+
+Asad: reviews every pull request, creates the third-party accounts (LiveKit, Firebase, Google Cloud, Google Play Console), and joins the playtests.
+
+
+Working rules for the split
+
+Jawad. Most of Abaid's screens need a backend ticket from Jawad first (the &quot;Needs&quot; column). Jawad should finish each phase's backend tickets before Abaid reaches the matching screens.
+
+Abaid never waits idle. While a backend ticket is pending, build the screen against mock data (a local fake object), then swap in the real Supabase calls when Jawad's ticket is merged.
+
+Split tickets (026, 034, 035, 083) have a backend half for Jawad and a screen half for Abaid. Jawad merges the backend half first.
+
+Extra review on the tickets that protect hidden information: 040, 045, 060, 071, 074.
+
+Branch name: feature/MAF-xxx-short-name. One ticket, one PR into dev.
+
+
+
+
+
+Abaid (frontend): 33 tickets plus the screen half of 4 shared tickets
+
+Phase
+
+Ticket
+
+Title
+
+Needs (from Jawad)
+
+0
+
+MAF-001
+
+Bootstrap the frontend app
+
+none, start on day 1
+
+0
+
+MAF-005
+
+Supabase client setup
+
+002
+
+0
+
+MAF-006
+
+Theme and shared UI kit
+
+none
+
+0
+
+MAF-007
+
+Navigation skeleton
+
+none
+
+1
+
+MAF-010
+
+Splash screen
+
+none
+
+1
+
+MAF-012
+
+Email sign-up and login
+
+002
+
+1
+
+MAF-013
+
+Guest login
+
+002
+
+1
+
+MAF-014
+
+Profile setup screen
+
+011
+
+1
+
+MAF-015
+
+Home screen
+
+none (placeholders)
+
+1
+
+MAF-016
+
+Settings screen
+
+none
+
+2
+
+MAF-021
+
+Create room screen
+
+020
+
+2
+
+MAF-022
+
+Join room by code
+
+020
+
+2
+
+MAF-023
+
+Lobby screen
+
+020
+
+2
+
+MAF-024
+
+Host room settings screen
+
+025 (rules)
+
+2
+
+MAF-026
+
+Host controls, screen half
+
+026 backend half
+
+3
+
+MAF-031
+
+Add friend (search by username)
+
+030
+
+3
+
+MAF-032
+
+Friend requests inbox
+
+030
+
+3
+
+MAF-033
+
+Friends list with online status
+
+030
+
+3
+
+MAF-034
+
+Invite a friend to a room, screen half
+
+034 backend half
+
+3
+
+MAF-035
+
+Block and report players, screen half
+
+035 backend half
+
+4
+
+MAF-043
+
+Role reveal screen
+
+041
+
+4
+
+MAF-046
+
+Night screens per role
+
+045
+
+4
+
+MAF-048
+
+Day discussion screen
+
+044
+
+4
+
+MAF-050
+
+Voting screen
+
+049
+
+4
+
+MAF-052
+
+Game over screen
+
+051
+
+4
+
+MAF-053
+
+Dead player mode
+
+047
+
+4
+
+MAF-054
+
+Narrator engine
+
+044
+
+4
+
+MAF-055
+
+Narrator script
+
+none
+
+5
+
+MAF-061
+
+Chat UI component
+
+none (fake messages)
+
+5
+
+MAF-062
+
+Lobby chat
+
+060
+
+5
+
+MAF-063
+
+In-game chat channels and rules
+
+060
+
+6
+
+MAF-072
+
+Global voice room
+
+071
+
+6
+
+MAF-075
+
+Voice user experience
+
+072
+
+7
+
+MAF-080
+
+Sound effects, music and haptics
+
+none
+
+7
+
+MAF-082
+
+How-to-play and onboarding
+
+none
+
+7
+
+MAF-083
+
+Profile and stats, screen half
+
+083 backend half
+
+7
+
+MAF-086
+
+App icon, splash assets, store images
+
+none
+
+Can start immediately with no backend: 001, 006, 007, 010, 016, 055, 061, 082, 086.
+
+
+
+
+
+Jawad (full stack and configuration): 32 tickets plus the backend half of 4 shared tickets
+
+Phase
+
+Ticket
+
+Title
+
+Notes
+
+0
+
+MAF-002
+
+Create the Supabase project and init the backend
+
+Do first, unblocks Abaid's 005 and 012
+
+0
+
+MAF-003
+
+Repository rules
+
+Branch rulesets, CODEOWNERS, PR template, labels
+
+1
+
+MAF-011
+
+Profiles table, trigger and RLS
+
+
+
+1
+
+MAF-017
+
+Delete account
+
+Edge Function plus the confirm dialog
+
+2
+
+MAF-020
+
+Rooms schema, RLS and room codes
+
+Unblocks 021, 022, 023
+
+2
+
+MAF-025
+
+Server-side validation of room settings
+
+Use min 4 players (see notes)
+
+2
+
+MAF-026
+
+Host controls, backend half
+
+Kick, transfer host, close room, start game rules
+
+2
+
+MAF-027
+
+Presence, reconnect and host migration in lobby
+
+
+
+3
+
+MAF-030
+
+Friends schema and RLS
+
+Unblocks 031, 032, 033
+
+3
+
+MAF-034
+
+Invite a friend to a room, backend half
+
+Invite table, expiry after 2 minutes
+
+3
+
+MAF-035
+
+Block and report players, backend half
+
+Blocks table, reports table, RLS
+
+4
+
+MAF-040
+
+Game schema with hidden roles
+
+Owner review
+
+4
+
+MAF-041
+
+Start-game function and role assignment
+
+
+
+4
+
+MAF-042
+
+Test bots (dev only)
+
+Build early, it helps everyone test
+
+4
+
+MAF-044
+
+Phase state machine and timers
+
+Unblocks 048, 054
+
+4
+
+MAF-045
+
+Night action functions
+
+Owner review
+
+4
+
+MAF-047
+
+Dawn resolution and announcement
+
+Includes the &quot;doctor saved / detective identified&quot; line
+
+4
+
+MAF-049
+
+Vote resolution function
+
+
+
+4
+
+MAF-051
+
+Win condition check
+
+
+
+5
+
+MAF-060
+
+Chat schema and RLS by channel
+
+Owner review
+
+5
+
+MAF-064
+
+Rate limit and basic profanity filter
+
+Backend and small UI change
+
+6
+
+MAF-070
+
+Voice spike (proof of concept)
+
+Needs the owner's LiveKit account
+
+6
+
+MAF-071
+
+Voice token function
+
+Owner review
+
+6
+
+MAF-073
+
+Mafia private voice and mic target toggle
+
+
+
+6
+
+MAF-074
+
+Phase-based voice rules
+
+Owner review
+
+6
+
+MAF-076
+
+Voice usage guard
+
+
+
+7
+
+MAF-081
+
+Reconnect and rejoin a game in progress
+
+
+
+7
+
+MAF-083
+
+Profile and stats, backend half
+
+
+
+7
+
+MAF-084
+
+Push notifications
+
+Needs the owner's Firebase project
+
+7
+
+MAF-085
+
+Google sign-in
+
+Needs the owner's Google Cloud project
+
+7
+
+MAF-087
+
+Privacy policy, terms and data safety form
+
+
+
+7
+
+MAF-089
+
+Release build and Google Play closed test
+
+Needs the owner's Play Console account
+
+
+
+
+
+Shared
+
+Ticket
+
+Title
+
+Who
+
+MAF-088
+
+Playtest and bug bash
+
+Abaid, Jawad and the owner together
+
+
+
+
+
+
