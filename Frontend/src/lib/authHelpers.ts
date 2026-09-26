@@ -35,7 +35,10 @@ export function getDisplayName(user: User | null | undefined): string {
 }
 
 /** Maps Supabase / network errors to short, user-facing messages. */
-export function getFriendlyAuthError(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
+export function getFriendlyAuthError(
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.'
+): string {
   if (isAuthRetryableFetchError(error)) {
     return "Can't reach the server. Check your internet connection and try again.";
   }
@@ -50,7 +53,9 @@ export function getFriendlyAuthError(error: unknown, fallback = 'Something went 
       case 'email_exists':
         return 'An account with this email already exists. Try logging in instead.';
       case 'weak_password':
-        return error.message || `Password is too weak. Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+        return (
+          error.message || `Password is too weak. Use at least ${MIN_PASSWORD_LENGTH} characters.`
+        );
       case 'email_address_invalid':
         return 'Please enter a valid email address.';
       case 'over_request_rate_limit':

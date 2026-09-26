@@ -179,7 +179,11 @@ export default function ForgotPasswordScreen({ onNavigateToLogin }: ForgotPasswo
                 >
                   <View style={styles.buttonContent}>
                     {isLoading ? (
-                      <ActivityIndicator color="#ffffff" size="small" style={styles.buttonSpinner} />
+                      <ActivityIndicator
+                        color="#ffffff"
+                        size="small"
+                        style={styles.buttonSpinner}
+                      />
                     ) : null}
                     <Text style={styles.primaryButtonText}>
                       {isLoading ? 'TRANSMITTING...' : 'SEND RECOVERY LINK'}

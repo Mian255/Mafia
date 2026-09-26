@@ -158,7 +158,9 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 <Text style={styles.badgeText}>NEW OPERATIVE</Text>
                 <View style={styles.blueDot} />
               </View>
-              <Text style={styles.title}>{confirmationSentTo ? 'CHECK YOUR EMAIL' : 'REGISTER'}</Text>
+              <Text style={styles.title}>
+                {confirmationSentTo ? 'CHECK YOUR EMAIL' : 'REGISTER'}
+              </Text>
               <Text style={styles.subtitle}>
                 {confirmationSentTo
                   ? `We sent a confirmation link to ${confirmationSentTo}. Confirm your email, then log in.`
@@ -316,7 +318,11 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                 >
                   <View style={styles.buttonContent}>
                     {isLoading ? (
-                      <ActivityIndicator color="#07090e" size="small" style={styles.buttonSpinner} />
+                      <ActivityIndicator
+                        color="#07090e"
+                        size="small"
+                        style={styles.buttonSpinner}
+                      />
                     ) : null}
                     <Text style={styles.primaryButtonText}>
                       {isLoading ? 'ENROLLING ALIAS...' : 'CREATE IDENTITY'}
@@ -329,7 +335,11 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
             {/* Footer Navigation */}
             <View style={styles.footer}>
               <Text style={styles.footerText}>Already have an alias?</Text>
-              <TouchableOpacity onPress={onNavigateToLogin} disabled={isLoading} activeOpacity={0.7}>
+              <TouchableOpacity
+                onPress={onNavigateToLogin}
+                disabled={isLoading}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.loginLink}> Log In</Text>
               </TouchableOpacity>
             </View>

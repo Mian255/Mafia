@@ -175,7 +175,11 @@ export default function LoginScreen({
           <View style={styles.formWrapper}>
             {/* Character Stage: Mafia & Detective Standing Right on Login Box */}
             <View style={styles.charactersStage}>
-              <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
+              <Image
+                source={mafiaVsDetective}
+                style={styles.charactersImage}
+                resizeMode="contain"
+              />
             </View>
 
             {/* Login Box Container */}
@@ -203,7 +207,8 @@ export default function LoginScreen({
                     value={email}
                     onChangeText={(text) => {
                       setEmail(text);
-                      if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                      if (fieldErrors.email)
+                        setFieldErrors((prev) => ({ ...prev, email: undefined }));
                       if (formError) setFormError('');
                     }}
                     placeholder="Enter your email"
