@@ -32,7 +32,7 @@ export default function App() {
    */
   const resolveSignedInDestination = useCallback(async (user: User): Promise<ScreenState> => {
     setCurrentUser(user);
-    if (user.is_anonymous) {
+    if (user.is_anonymous || user.user_metadata?.is_guest) {
       const alias = user.user_metadata?.username || `Guest_${user.id.slice(0, 4).toUpperCase()}`;
       setUserAlias(alias);
       return 'home';

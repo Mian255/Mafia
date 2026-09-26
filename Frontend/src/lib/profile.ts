@@ -121,30 +121,21 @@ function isUniqueUsernameViolation(error: { code?: string; message?: string; det
  * it as chosen in the auth user metadata. Returns 'taken' if someone else owns the name.
  */
 export async function saveUsername(user: User, username: string): Promise<SaveUsernameResult> {
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('profiles')
-    .update({ username, updated_at: new Date().toISOString() })
-    .eq('id', user.id)
-    .select('id');
+    .upsert({
+      id: user.id,
+      email: user.email,
+      username,
+      updated_at: new Date().toISOString(),
+    } as never);
 
   if (error) {
     if (isUniqueUsernameViolation(error)) return 'taken';
     throw error;
   }
 
-  if (!data || data.length === 0) {
-    // No profile row yet (the sign-up trigger normally creates it): create it.
-    const { error: insertError } = await supabase
-      .from('profiles')
-      .insert({ id: user.id, username });
-    if (insertError) {
-      if (isUniqueUsernameViolation(insertError)) return 'taken';
-      throw insertError;
-    }
-  }
-
-  // Best effort: keeps the display name and the offline fallback in sync. The profile row above
-  // is the source of truth, so a failure here is not shown to the user.
+  // Best effort: keeps the display name and the offline fallback in sync.
   try {
     await supabase.auth.updateUser({ data: { username, username_set: true } });
   } catch {
