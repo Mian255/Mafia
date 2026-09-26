@@ -22,6 +22,7 @@ import {
   validateEmail,
   validateNewPassword,
 } from '../../lib/authHelpers';
+import { validateUsername } from '../../lib/profile';
 import { AuthTextInput } from '../../components/auth/AuthTextInput';
 import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
 import { useStableCallback } from '../../hooks/useStableCallback';
@@ -30,15 +31,10 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface SignUpScreenProps {
   onNavigateToLogin?: () => void;
-  /**
-   * Called only when sign-up produced a session (email confirmation disabled, or Google).
-   * Awaited, so the button keeps its spinner while the app decides where to go next
-   * (the username is chosen on the Profile Setup screen).
-   */
   onSignUpSuccess?: (user: User) => Promise<void> | void;
 }
 
-type FieldName = 'email' | 'password' | 'confirmPassword';
+type FieldName = 'username' | 'email' | 'password' | 'confirmPassword';
 type FieldErrors = Partial<Record<FieldName, string>>;
 
 const ShowHideToggle = memo(function ShowHideToggle({
@@ -62,6 +58,7 @@ const ShowHideToggle = memo(function ShowHideToggle({
 });
 
 export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: SignUpScreenProps) {
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -72,13 +69,13 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
   const [googleLoading, setGoogleLoading] = useState(false);
   const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null);
 
+  const usernameRef = useRef<TextInput>(null);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
   const confirmPasswordRef = useRef<TextInput>(null);
-  // Synchronous guard so rapid double taps can't send two sign-up requests.
   const requestInFlight = useRef(false);
 
-  // Entrance animation (native driver, runs once on mount)
+  // Entrance animation
   const [fadeAnim] = useState(() => new Animated.Value(0));
   const [slideAnim] = useState(() => new Animated.Value(25));
 
@@ -97,7 +94,12 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     ]).start();
   }, [fadeAnim, slideAnim]);
 
-  // Stable handlers so inputs don't re-render needlessly on typing
+  const handleUsernameChange = useCallback((text: string) => {
+    setUsername(text);
+    setFieldErrors((prev) => (prev.username ? { ...prev, username: undefined } : prev));
+    setErrorMessage((prev) => (prev ? '' : prev));
+  }, []);
+
   const handleEmailChange = useCallback((text: string) => {
     setEmail(text);
     setFieldErrors((prev) => (prev.email ? { ...prev, email: undefined } : prev));
@@ -120,6 +122,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setErrorMessage((prev) => (prev ? '' : prev));
   }, []);
 
+  const focusEmail = useCallback(() => emailRef.current?.focus(), []);
   const focusPassword = useCallback(() => passwordRef.current?.focus(), []);
   const focusConfirm = useCallback(() => confirmPasswordRef.current?.focus(), []);
   const toggleShowPassword = useCallback(() => setShowPassword((prev) => !prev), []);
@@ -131,6 +134,9 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
 
   const validate = (): FieldErrors => {
     const errors: FieldErrors = {};
+    const usernameError = validateUsername(username);
+    if (usernameError) errors.username = usernameError;
+
     const emailError = validateEmail(email);
     if (emailError) errors.email = emailError;
 
@@ -153,30 +159,70 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setErrorMessage('');
     if (Object.values(errors).some(Boolean)) return;
 
+    const trimmedUsername = username.trim();
     const trimmedEmail = email.trim();
 
     requestInFlight.current = true;
     setIsLoading(true);
 
     try {
-      // Username is chosen (and checked for availability) on the Profile Setup screen.
+      // 1. Check if username is already taken in Supabase
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('username', trimmedUsername)
+        .maybeSingle();
+
+      if (existingUser) {
+        setFieldErrors({ username: 'This username is already taken. Choose another.' });
+        setIsLoading(false);
+        requestInFlight.current = false;
+        return;
+      }
+
+      // 2. Sign up with Supabase Auth
       const { data, error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
+        options: {
+          data: {
+            username: trimmedUsername,
+          },
+        },
       });
 
       if (error) {
         setErrorMessage(
           getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
         );
-      } else if (data.session) {
-        // Email confirmation is off: user is signed in right away.
+      } else if (data.session?.user) {
+        // Save profile record in Supabase profiles table
+        try {
+          await supabase.from('profiles').upsert({
+            id: data.session.user.id,
+            email: trimmedEmail,
+            username: trimmedUsername,
+            updated_at: new Date().toISOString(),
+          } as never);
+        } catch {
+          // ignore
+        }
+
         await onSignUpSuccess?.(data.session.user);
       } else if (data.user && data.user.identities?.length === 0) {
-        // With confirmation on, Supabase returns a user without identities for an existing email.
         setErrorMessage('An account with this email already exists. Try logging in instead.');
-      } else {
-        // Email confirmation is on: no session until user clicks the link.
+      } else if (data.user) {
+        // Record profile entry
+        try {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            email: trimmedEmail,
+            username: trimmedUsername,
+            updated_at: new Date().toISOString(),
+          } as never);
+        } catch {
+          // ignore
+        }
         setConfirmationSentTo(trimmedEmail);
       }
     } catch (err: unknown) {
@@ -189,7 +235,6 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     }
   });
 
-  // Google from the Sign Up screen creates the account (or signs in an existing one).
   const handleGoogleSignUp = useStableCallback(async () => {
     if (requestInFlight.current) return;
     requestInFlight.current = true;
@@ -236,7 +281,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
             <View style={styles.header}>
               <View style={styles.badgeRow}>
                 <View style={styles.crimsonDot} />
-                <Text style={styles.badgeText}>NEW ACCOUNT</Text>
+                <Text style={styles.badgeText}>JOIN THE SYNDICATE</Text>
                 <View style={styles.blueDot} />
               </View>
               <Text style={styles.title}>
@@ -245,7 +290,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
               <Text style={styles.subtitle}>
                 {confirmationSentTo
                   ? `We sent a confirmation link to ${confirmationSentTo}. Confirm your email, then log in.`
-                  : "Create your account. You'll pick your alias next."}
+                  : 'Create your operative account and choose your alias.'}
               </Text>
             </View>
 
@@ -271,6 +316,23 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
             ) : (
               <View style={styles.form}>
                 <AuthTextInput
+                  ref={usernameRef}
+                  label="Operative Codename"
+                  error={fieldErrors.username}
+                  placeholder="e.g. Vito or InspectorMike"
+                  value={username}
+                  onChangeText={handleUsernameChange}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="username"
+                  textContentType="username"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={focusEmail}
+                  editable={!busy}
+                />
+
+                <AuthTextInput
                   ref={emailRef}
                   label="Email Address"
                   error={fieldErrors.email}
@@ -281,7 +343,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoComplete="email"
-                  textContentType="username"
+                  textContentType="emailAddress"
                   returnKeyType="next"
                   submitBehavior="submit"
                   onSubmitEditing={focusPassword}
@@ -342,7 +404,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                       />
                     ) : null}
                     <Text style={styles.primaryButtonText}>
-                      {isLoading ? 'ENROLLING...' : 'CREATE IDENTITY'}
+                      {isLoading ? 'ENROLLING...' : 'CREATE ACCOUNT'}
                     </Text>
                   </View>
                 </TouchableOpacity>

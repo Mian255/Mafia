@@ -26,7 +26,6 @@ import { useStableCallback } from '../../hooks/useStableCallback';
 const mafiaVsDetective = require('../../../assets/characters_transparent.png');
 
 const CHARACTERS_ASPECT_RATIO = 1042 / 499;
-/** Upper bound for system font scaling on this screen so large accessibility fonts can't break the fixed-height inputs/buttons. */
 const MAX_FONT_SCALE = 1.3;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -45,11 +44,6 @@ interface LoginLayout {
   charactersHeight: number;
 }
 
-/**
- * Responsive metrics derived from the current window size (updates on rotation / foldables /
- * split screen). Everything is scaled from a 390dp-wide reference phone and clamped so that
- * small 320-360dp phones, tall 20:9 phones and tablets all stay balanced.
- */
 function useLoginLayout(): LoginLayout {
   const { width, height } = useWindowDimensions();
   return useMemo(() => {
@@ -225,10 +219,6 @@ const EyeToggle = memo(function EyeToggle({
 interface LoginScreenProps {
   onNavigateToSignUp?: () => void;
   onNavigateToForgotPassword?: () => void;
-  /**
-   * Called only after Supabase returned a valid session for an existing account.
-   * Awaited, so the button keeps its spinner while the app decides where to go next.
-   */
   onLoginSuccess?: (user: User) => Promise<void> | void;
 }
 
@@ -243,19 +233,16 @@ export default function LoginScreen({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [guestLoading, setGuestLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState('');
-  // Set when a Google login attempt turned out to have no existing account behind it.
   const [noAccountFound, setNoAccountFound] = useState(false);
 
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
-  // Synchronous guard so rapid double taps can't start two requests before re-render.
   const requestInFlight = useRef(false);
 
-  const busy = loading || guestLoading || googleLoading;
+  const busy = loading || googleLoading;
 
   const layout = useLoginLayout();
   const scrollContentStyle = useMemo(
@@ -374,69 +361,6 @@ export default function LoginScreen({
     });
   });
 
-  const handleGuestLogin = useStableCallback(() =>
-    runExclusive(setGuestLoading, async () => {
-      try {
-        const titles = [
-          'Shadow',
-          'Vito',
-          'Cipher',
-          'Falcon',
-          'Specter',
-          'Raven',
-          'Bullet',
-          'Enforcer',
-          'Outlaw',
-          'Ghost',
-          'Phantom',
-          'Blaze',
-          'Viper',
-          'Wolf',
-          'Ace',
-          'Hunter',
-          'Slick',
-          'Boss',
-        ];
-        const randomTitle = titles[Math.floor(Math.random() * titles.length)];
-        const randomCode = Math.floor(1000 + Math.random() * 9000);
-        const guestAlias = `Guest_${randomTitle}_${randomCode}`;
-
-        try {
-          const { data, error } = await supabase.auth.signInAnonymously({
-            options: {
-              data: {
-                username: guestAlias,
-                is_guest: true,
-              },
-            },
-          });
-
-          if (!error && data?.session?.user) {
-            await onLoginSuccess?.(data.session.user);
-            return;
-          }
-        } catch {
-          // If Supabase anonymous auth provider is not active, fallback gracefully
-        }
-
-        // Guaranteed guest entry fallback
-        const guestUser: User = {
-          id: `guest_${Date.now()}_${randomCode}`,
-          app_metadata: { provider: 'anonymous' },
-          user_metadata: { username: guestAlias, is_guest: true },
-          aud: 'authenticated',
-          created_at: new Date().toISOString(),
-          is_anonymous: true,
-        };
-        await onLoginSuccess?.(guestUser);
-      } catch (err: unknown) {
-        setFormError(
-          getFriendlyAuthError(err, "We couldn't start a guest game. Please try again.")
-        );
-      }
-    })
-  );
-
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -552,33 +476,6 @@ export default function LoginScreen({
                 loading={googleLoading}
                 disabled={busy}
               />
-
-              {/* Divider OR */}
-              <View style={styles.orDividerContainer}>
-                <View style={styles.orLine} />
-                <Text style={styles.orText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
-                  OR
-                </Text>
-                <View style={styles.orLine} />
-              </View>
-
-              {/* Play as Guest Option */}
-              <TouchableOpacity
-                style={[styles.guestButton, busy && !guestLoading && styles.buttonDisabled]}
-                onPress={handleGuestLogin}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: busy, busy: guestLoading }}
-                activeOpacity={0.75}
-              >
-                {guestLoading ? (
-                  <ActivityIndicator color="#cbd5e1" size="small" />
-                ) : (
-                  <Text style={styles.guestButtonText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
-                    PLAY AS GUEST
-                  </Text>
-                )}
-              </TouchableOpacity>
             </View>
           </View>
 
@@ -767,38 +664,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 2.5,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-  },
-  orDividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 10,
-  },
-  orLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: 'rgba(253, 230, 138, 0.2)',
-  },
-  orText: {
-    color: '#64748b',
-    fontSize: 10.5,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginHorizontal: 10,
-  },
-  guestButton: {
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(253, 230, 138, 0.25)',
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-  },
-  guestButtonText: {
-    color: '#cbd5e1',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.8,
   },
 
   /* Footer */
