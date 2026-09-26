@@ -5,11 +5,15 @@ on:
     branches:
       - main
       - dev
+  pull_request:
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Frontend Quality Checks (Typecheck & Lint)
+  # 1. Frontend Quality Checks (Typecheck, Lint & Tests)
   # ---------------------------------------------------------------------------
   frontend-ci:
     name: Frontend CI (Typecheck & Lint)
@@ -28,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: Frontend/package-lock.json
 
@@ -41,6 +45,9 @@ jobs:
       - name: Lint Check
         run: npm run lint
 
+      - name: Jest Test Suite
+        run: npm test
+
   # ---------------------------------------------------------------------------
   # 2. Supabase Database Migration Deployment
   # ---------------------------------------------------------------------------
@@ -50,6 +57,7 @@ jobs:
     defaults:
       run:
         working-directory: Backend
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
