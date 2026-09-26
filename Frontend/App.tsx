@@ -8,27 +8,47 @@ import SignUpScreen from './src/screens/auth/SignUpScreen';
 import ForgotPasswordScreen, { ForgotPasswordStep } from './src/screens/auth/ForgotPasswordScreen';
 import ProfileSetupScreen from './src/screens/auth/ProfileSetupScreen';
 import HomeScreen from './src/screens/main/HomeScreen';
+import CreateRoomScreen from './src/screens/room/CreateRoomScreen';
+import JoinRoomScreen from './src/screens/room/JoinRoomScreen';
+import LobbyScreen from './src/screens/room/LobbyScreen';
 import { supabase } from './src/lib/supabase';
 import { createSessionFromUrl } from './src/lib/auth';
 import { getDisplayName } from './src/lib/authHelpers';
 import { getUsernameStatus } from './src/lib/profile';
+import type { Room } from './src/lib/rooms';
 
-type ScreenState = 'splash' | 'login' | 'signup' | 'forgot-password' | 'profile-setup' | 'home';
+type ScreenState =
+  | 'splash'
+  | 'login'
+  | 'signup'
+  | 'forgot-password'
+  | 'profile-setup'
+  | 'home'
+  | 'create-room'
+  | 'join-room'
+  | 'lobby';
 
 /** Screens that require a signed-in user. Losing the session on one of these returns to Login. */
-const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>(['profile-setup', 'home']);
+const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
+  'profile-setup',
+  'home',
+  'create-room',
+  'join-room',
+  'lobby',
+]);
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenState>('splash');
   const [userAlias, setUserAlias] = useState('Agent');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [initialDestination, setInitialDestination] = useState<ScreenState | null>(null);
   const [splashFinished, setSplashFinished] = useState(false);
   const [recoveryStep, setRecoveryStep] = useState<ForgotPasswordStep>('request');
 
   /**
    * Decides where a signed-in user goes: Profile Setup until they have chosen a username,
-   * Home afterwards. Guests (anonymous) always go straight Home.
+   * Home afterwards.
    */
   const resolveSignedInDestination = useCallback(async (user: User): Promise<ScreenState> => {
     setCurrentUser(user);
@@ -78,6 +98,7 @@ export default function App() {
       } else if (event === 'SIGNED_OUT') {
         setUserAlias('Agent');
         setCurrentUser(null);
+        setActiveRoom(null);
         setInitialDestination('login');
         setCurrentScreen((prev) => (PROTECTED_SCREENS.has(prev) ? 'login' : prev));
       }
@@ -138,10 +159,25 @@ export default function App() {
   }, []);
 
   const goToSignUp = useCallback(() => setCurrentScreen('signup'), []);
-  
+
   const goToForgotPassword = useCallback(() => {
     setRecoveryStep('request');
     setCurrentScreen('forgot-password');
+  }, []);
+
+  const handleRoomCreated = useCallback((room: Room) => {
+    setActiveRoom(room);
+    setCurrentScreen('lobby');
+  }, []);
+
+  const handleRoomJoined = useCallback((room: Room) => {
+    setActiveRoom(room);
+    setCurrentScreen('lobby');
+  }, []);
+
+  const handleLeaveLobby = useCallback(() => {
+    setActiveRoom(null);
+    setCurrentScreen('home');
   }, []);
 
   return (
@@ -183,10 +219,39 @@ export default function App() {
         {currentScreen === 'home' && (
           <HomeScreen
             userAlias={userAlias}
+            onCreateRoom={() => setCurrentScreen('create-room')}
+            onJoinRoom={() => setCurrentScreen('join-room')}
             onLogout={() => {
               setUserAlias('Agent');
               setCurrentUser(null);
+              setActiveRoom(null);
               setCurrentScreen('login');
+            }}
+          />
+        )}
+
+        {currentScreen === 'create-room' && (
+          <CreateRoomScreen
+            onBack={() => setCurrentScreen('home')}
+            onRoomCreated={handleRoomCreated}
+          />
+        )}
+
+        {currentScreen === 'join-room' && (
+          <JoinRoomScreen
+            onBack={() => setCurrentScreen('home')}
+            onRoomJoined={handleRoomJoined}
+          />
+        )}
+
+        {currentScreen === 'lobby' && activeRoom && currentUser && (
+          <LobbyScreen
+            room={activeRoom}
+            currentUserId={currentUser.id}
+            onLeave={handleLeaveLobby}
+            onStartGame={(roomId) => {
+              // Future Phase 4: Route to GameScreen
+              console.log('Game Starting for room:', roomId);
             }}
           />
         )}
