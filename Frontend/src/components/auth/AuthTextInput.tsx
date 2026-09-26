@@ -1,6 +1,9 @@
 import React, { memo, useCallback, useState } from 'react';
 import { StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
 
+/** Caps system font scaling so large accessibility fonts can't overflow the fixed-height fields. */
+const MAX_FONT_SCALE = 1.3;
+
 /**
  * Shared text field for the auth screens.
  *
@@ -53,7 +56,9 @@ function AuthTextInputBase({
   if (variant === 'gold') {
     return (
       <View style={gold.inputGroup}>
-        <Text style={gold.fieldLabel}>{label}</Text>
+        <Text maxFontSizeMultiplier={MAX_FONT_SCALE} style={gold.fieldLabel}>
+          {label}
+        </Text>
         <View
           style={[gold.inputBox, focused && gold.inputBoxFocused, hasError && gold.inputBoxError]}
         >
@@ -61,6 +66,7 @@ function AuthTextInputBase({
           <TextInput
             ref={ref}
             style={gold.textInput}
+            maxFontSizeMultiplier={MAX_FONT_SCALE}
             placeholderTextColor="#64748b"
             accessibilityLabel={label}
             onFocus={handleFocus}
@@ -70,9 +76,16 @@ function AuthTextInputBase({
           {rightAccessory}
         </View>
         {error ? (
-          <Text style={gold.fieldErrorText}>{error}</Text>
+          <Text maxFontSizeMultiplier={MAX_FONT_SCALE} style={gold.fieldErrorText}>
+            {error}
+          </Text>
         ) : hint ? (
-          <Text style={[gold.hintText, hintTone === 'success' && gold.hintSuccess]}>{hint}</Text>
+          <Text
+            maxFontSizeMultiplier={MAX_FONT_SCALE}
+            style={[gold.hintText, hintTone === 'success' && gold.hintSuccess]}
+          >
+            {hint}
+          </Text>
         ) : null}
       </View>
     );
@@ -80,7 +93,9 @@ function AuthTextInputBase({
 
   return (
     <View style={slate.inputGroup}>
-      <Text style={slate.inputLabel}>{label}</Text>
+      <Text maxFontSizeMultiplier={MAX_FONT_SCALE} style={slate.inputLabel}>
+        {label}
+      </Text>
       <View style={slate.inputWrap}>
         <TextInput
           ref={ref}
@@ -90,6 +105,7 @@ function AuthTextInputBase({
             hasError && slate.inputError,
             !!rightAccessory && slate.inputWithAccessory,
           ]}
+          maxFontSizeMultiplier={MAX_FONT_SCALE}
           placeholderTextColor="#475569"
           accessibilityLabel={label}
           onFocus={handleFocus}
@@ -99,9 +115,16 @@ function AuthTextInputBase({
         {rightAccessory ? <View style={slate.accessory}>{rightAccessory}</View> : null}
       </View>
       {error ? (
-        <Text style={slate.fieldErrorText}>{error}</Text>
+        <Text maxFontSizeMultiplier={MAX_FONT_SCALE} style={slate.fieldErrorText}>
+          {error}
+        </Text>
       ) : hint ? (
-        <Text style={[slate.hintText, hintTone === 'success' && slate.hintSuccess]}>{hint}</Text>
+        <Text
+          maxFontSizeMultiplier={MAX_FONT_SCALE}
+          style={[slate.hintText, hintTone === 'success' && slate.hintSuccess]}
+        >
+          {hint}
+        </Text>
       ) : null}
     </View>
   );

@@ -1,16 +1,17 @@
 import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Image,
   KeyboardAvoidingView,
   Platform,
+  StatusBar as RNStatusBar,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
@@ -24,9 +25,65 @@ import { useStableCallback } from '../../hooks/useStableCallback';
 
 const mafiaVsDetective = require('../../../assets/characters_transparent.png');
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CHARACTERS_WIDTH = Math.min(SCREEN_WIDTH * 0.74, 280);
-const CHARACTERS_HEIGHT = CHARACTERS_WIDTH / (1042 / 499);
+const CHARACTERS_ASPECT_RATIO = 1042 / 499;
+/** Upper bound for system font scaling on this screen so large accessibility fonts can't break the fixed-height inputs/buttons. */
+const MAX_FONT_SCALE = 1.3;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+interface LoginLayout {
+  paddingTop: number;
+  paddingBottom: number;
+  paddingHorizontal: number;
+  titleFontSize: number;
+  titleLetterSpacing: number;
+  titleGap: number;
+  dividerWidth: number;
+  subtitleFontSize: number;
+  subtitleLetterSpacing: number;
+  charactersWidth: number;
+  charactersHeight: number;
+}
+
+/**
+ * Responsive metrics derived from the current window size (updates on rotation / foldables /
+ * split screen). Everything is scaled from a 390dp-wide reference phone and clamped so that
+ * small 320-360dp phones, tall 20:9 phones and tablets all stay balanced.
+ */
+function useLoginLayout(): LoginLayout {
+  const { width, height } = useWindowDimensions();
+  return useMemo(() => {
+    const scale = clamp(width / 390, 0.82, 1.35);
+    // The app draws edge-to-edge on Android, so content starts under the status bar / notch.
+    // (react-native-safe-area-context is not installed; on iOS use the usual notch inset.)
+    const statusBarInset =
+      Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : height / width > 2 ? 47 : 20;
+    // Moderate extra breathing room below the status bar, proportional to screen height.
+    const topGap = clamp(height * 0.035, 14, 40);
+    const titleFontSize = Math.round(clamp(38 * scale, 30, 52));
+    // Character art: ~74% of the width, but capped by screen height so short phones still fit
+    // the whole form, and capped absolutely so tablets don't get a giant banner.
+    const charactersWidth = Math.round(
+      Math.min(
+        clamp(width * 0.74, 220, 360),
+        clamp(height * 0.22, 120, 240) * CHARACTERS_ASPECT_RATIO
+      )
+    );
+    return {
+      paddingTop: statusBarInset + topGap,
+      paddingBottom: clamp(height * 0.025, 12, 32),
+      paddingHorizontal: clamp(width * 0.06, 16, 40),
+      titleFontSize,
+      titleLetterSpacing: Math.round(titleFontSize * 0.16),
+      titleGap: clamp(height * 0.02, 8, 24),
+      dividerWidth: clamp(140 * scale, 110, 200),
+      subtitleFontSize: clamp(10.5 * scale, 9.5, 14),
+      subtitleLetterSpacing: clamp(2.5 * scale, 1.5, 3.5),
+      charactersWidth,
+      charactersHeight: Math.round(charactersWidth / CHARACTERS_ASPECT_RATIO),
+    };
+  }, [width, height]);
+}
 
 /*
  * Performance note: everything static on this screen (full-screen SVG gradient background,
@@ -62,22 +119,50 @@ const NoirBackground = memo(function NoirBackground() {
   );
 });
 
-const TitleBlock = memo(function TitleBlock() {
+const TitleBlock = memo(function TitleBlock({ layout }: { layout: LoginLayout }) {
   return (
-    <View style={styles.titleContainer}>
-      <Text style={styles.titleText}>MAFIA</Text>
-      <View style={styles.goldDivider}>
+    <View style={[styles.titleContainer, { marginBottom: layout.titleGap }]}>
+      <Text
+        style={[
+          styles.titleText,
+          { fontSize: layout.titleFontSize, letterSpacing: layout.titleLetterSpacing },
+        ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        maxFontSizeMultiplier={1.15}
+        accessibilityRole="header"
+      >
+        MAFIA
+      </Text>
+      <View style={[styles.goldDivider, { width: layout.dividerWidth }]}>
         <View style={styles.dividerDiamond} />
       </View>
-      <Text style={styles.subtitleText}>TRUST NO ONE • SUSPECT EVERYONE</Text>
+      <Text
+        style={[
+          styles.subtitleText,
+          { fontSize: layout.subtitleFontSize, letterSpacing: layout.subtitleLetterSpacing },
+        ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+        maxFontSizeMultiplier={1.2}
+      >
+        TRUST NO ONE • SUSPECT EVERYONE
+      </Text>
     </View>
   );
 });
 
-const CharactersStage = memo(function CharactersStage() {
+const CharactersStage = memo(function CharactersStage({
+  width,
+  height,
+}: {
+  width: number;
+  height: number;
+}) {
   return (
     <View style={styles.charactersStage} pointerEvents="none">
-      <Image source={mafiaVsDetective} style={styles.charactersImage} resizeMode="contain" />
+      <Image source={mafiaVsDetective} style={{ width, height }} resizeMode="contain" />
     </View>
   );
 });
@@ -182,6 +267,19 @@ export default function LoginScreen({
   const requestInFlight = useRef(false);
 
   const busy = loading || guestLoading || googleLoading;
+
+  const layout = useLoginLayout();
+  const scrollContentStyle = useMemo(
+    () => [
+      styles.scrollContent,
+      {
+        paddingTop: layout.paddingTop,
+        paddingBottom: layout.paddingBottom,
+        paddingHorizontal: layout.paddingHorizontal,
+      },
+    ],
+    [layout]
+  );
 
   const runExclusive = async (setBusy: (value: boolean) => void, task: () => Promise<void>) => {
     if (requestInFlight.current) return;
@@ -302,16 +400,16 @@ export default function LoginScreen({
         style={styles.keyboardAvoid}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={scrollContentStyle}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="none"
         >
-          <TitleBlock />
+          <TitleBlock layout={layout} />
 
           {/* Form & Characters Combined Unit */}
           <View style={styles.formWrapper}>
-            <CharactersStage />
+            <CharactersStage width={layout.charactersWidth} height={layout.charactersHeight} />
 
             {/* Login Box Container */}
             <View style={styles.formCard}>
@@ -357,7 +455,7 @@ export default function LoginScreen({
               {/* Google login for someone who never signed up */}
               {noAccountFound ? (
                 <View style={styles.noAccountBox} accessibilityLiveRegion="polite">
-                  <Text style={styles.noAccountText}>
+                  <Text style={styles.noAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                     We couldn&apos;t find an account for this email. Please sign up first.
                   </Text>
                   <TouchableOpacity
@@ -366,14 +464,20 @@ export default function LoginScreen({
                     activeOpacity={0.8}
                     accessibilityRole="button"
                   >
-                    <Text style={styles.noAccountButtonText}>GO TO SIGN UP</Text>
+                    <Text style={styles.noAccountButtonText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                      GO TO SIGN UP
+                    </Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
 
               {/* Server / auth error */}
               {formError ? (
-                <Text style={styles.formErrorText} accessibilityLiveRegion="polite">
+                <Text
+                  style={styles.formErrorText}
+                  maxFontSizeMultiplier={MAX_FONT_SCALE}
+                  accessibilityLiveRegion="polite"
+                >
                   {formError}
                 </Text>
               ) : null}
@@ -391,7 +495,9 @@ export default function LoginScreen({
                 {loading ? (
                   <ActivityIndicator color="#fde68a" size="small" />
                 ) : (
-                  <Text style={styles.loginButtonText}>LOGIN</Text>
+                  <Text style={styles.loginButtonText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                    LOGIN
+                  </Text>
                 )}
               </TouchableOpacity>
 
@@ -404,7 +510,9 @@ export default function LoginScreen({
               {/* Divider OR */}
               <View style={styles.orDividerContainer}>
                 <View style={styles.orLine} />
-                <Text style={styles.orText}>OR</Text>
+                <Text style={styles.orText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                  OR
+                </Text>
                 <View style={styles.orLine} />
               </View>
 
@@ -420,7 +528,9 @@ export default function LoginScreen({
                 {guestLoading ? (
                   <ActivityIndicator color="#cbd5e1" size="small" />
                 ) : (
-                  <Text style={styles.guestButtonText}>PLAY AS GUEST</Text>
+                  <Text style={styles.guestButtonText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                    PLAY AS GUEST
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -434,13 +544,19 @@ export default function LoginScreen({
               activeOpacity={0.7}
               style={styles.forgotTouch}
             >
-              <Text style={styles.forgotText}>Forgot Password?</Text>
+              <Text style={styles.forgotText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                Forgot Password?
+              </Text>
             </TouchableOpacity>
 
             <View style={styles.signUpGroup}>
-              <Text style={styles.needAccountText}>Need an account?</Text>
+              <Text style={styles.needAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                Need an account?
+              </Text>
               <TouchableOpacity onPress={onNavigateToSignUp} disabled={busy} activeOpacity={0.7}>
-                <Text style={styles.signUpText}>SIGN UP</Text>
+                <Text style={styles.signUpText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                  SIGN UP
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -460,30 +576,25 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: SCREEN_WIDTH * 0.06,
-    paddingTop: Platform.OS === 'ios' ? 44 : 20,
-    paddingBottom: 20,
+    // paddingTop / paddingBottom / paddingHorizontal come from useLoginLayout()
     alignItems: 'center',
     justifyContent: 'space-between',
   },
 
   /* Header Title */
   titleContainer: {
+    width: '100%',
     alignItems: 'center',
-    marginBottom: 6,
   },
   titleText: {
     color: '#fde68a',
-    fontSize: 38,
     fontWeight: '900',
-    letterSpacing: 6,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
     textShadowColor: 'rgba(217, 119, 6, 0.45)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 10,
   },
   goldDivider: {
-    width: 140,
     height: 1,
     backgroundColor: 'rgba(253, 230, 138, 0.35)',
     marginVertical: 4,
@@ -498,15 +609,14 @@ const styles = StyleSheet.create({
   },
   subtitleText: {
     color: '#94a3b8',
-    fontSize: 10.5,
     fontWeight: '700',
-    letterSpacing: 2.5,
     textTransform: 'uppercase',
   },
 
   /* Form & Characters Container */
   formWrapper: {
     width: '100%',
+    maxWidth: 480,
     alignItems: 'center',
     marginVertical: 2,
   },
@@ -518,10 +628,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     marginBottom: -1,
     zIndex: 10,
-  },
-  charactersImage: {
-    width: CHARACTERS_WIDTH,
-    height: CHARACTERS_HEIGHT,
   },
 
   /* Form Card & Inputs */
@@ -653,6 +759,7 @@ const styles = StyleSheet.create({
   /* Footer */
   footerContainer: {
     width: '100%',
+    maxWidth: 480,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',

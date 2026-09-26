@@ -64,7 +64,9 @@ function GoogleSignInButtonBase({
       ) : (
         <View style={styles.googleButtonInner}>
           <GoogleLogo />
-          <Text style={styles.googleButtonText}>{label}</Text>
+          <Text style={styles.googleButtonText} maxFontSizeMultiplier={1.3}>
+            {label}
+          </Text>
         </View>
       )}
     </TouchableOpacity>
