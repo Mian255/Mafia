@@ -17,7 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { signInWithGoogle } from '../../lib/auth';
-import { getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
+import { getFriendlyAuthError, isBrandNewAccount, validateEmail } from '../../lib/authHelpers';
 import { AuthTextInput } from '../../components/auth/AuthTextInput';
 import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
 import { useStableCallback } from '../../hooks/useStableCallback';
@@ -174,6 +174,8 @@ export default function LoginScreen({
   const [googleLoading, setGoogleLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState('');
+  // Set when a Google login attempt turned out to have no existing account behind it.
+  const [noAccountFound, setNoAccountFound] = useState(false);
 
   const passwordInputRef = useRef<TextInput>(null);
   // Synchronous guard so rapid double taps can't start two requests before re-render.
@@ -186,6 +188,7 @@ export default function LoginScreen({
     requestInFlight.current = true;
     setBusy(true);
     setFormError('');
+    setNoAccountFound(false);
     try {
       await task();
     } finally {
@@ -199,6 +202,7 @@ export default function LoginScreen({
     setEmail(text);
     setFieldErrors((prev) => (prev.email ? { ...prev, email: undefined } : prev));
     setFormError((prev) => (prev ? '' : prev));
+    setNoAccountFound(false);
   }, []);
 
   const handlePasswordChange = useCallback((text: string) => {
@@ -219,9 +223,19 @@ export default function LoginScreen({
       try {
         const session = await signInWithGoogle();
         // null means the user closed the browser: just stay on this screen.
-        if (session?.user) {
-          await onLoginSuccess?.(session.user);
+        if (!session?.user) return;
+
+        // Supabase creates a new user on the first Google sign-in. On the LOGIN screen that means
+        // this person never signed up, so don't let them in: sign straight back out.
+        // (The auth user that Supabase just created stays behind; deleting it needs a server-side
+        // function, see the delete-account ticket.)
+        if (isBrandNewAccount(session.user)) {
+          await supabase.auth.signOut();
+          setNoAccountFound(true);
+          return;
         }
+
+        await onLoginSuccess?.(session.user);
       } catch (err: unknown) {
         setFormError(getFriendlyAuthError(err, "Google sign-in didn't work. Please try again."));
       }
@@ -339,6 +353,23 @@ export default function LoginScreen({
                 onSubmitEditing={handleLogin}
                 editable={!busy}
               />
+
+              {/* Google login for someone who never signed up */}
+              {noAccountFound ? (
+                <View style={styles.noAccountBox} accessibilityLiveRegion="polite">
+                  <Text style={styles.noAccountText}>
+                    We couldn&apos;t find an account for this email. Please sign up first.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.noAccountButton}
+                    onPress={onNavigateToSignUp}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.noAccountButtonText}>GO TO SIGN UP</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
 
               {/* Server / auth error */}
               {formError ? (
@@ -515,6 +546,37 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     marginBottom: 10,
+  },
+  noAccountBox: {
+    backgroundColor: 'rgba(153, 27, 27, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(248, 113, 113, 0.45)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  noAccountText: {
+    color: '#fecaca',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  noAccountButton: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  noAccountButtonText: {
+    color: '#fde68a',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.5,
   },
   buttonDisabled: {
     opacity: 0.6,
