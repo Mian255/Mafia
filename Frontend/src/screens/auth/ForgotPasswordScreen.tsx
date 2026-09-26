@@ -57,8 +57,14 @@ export default function ForgotPasswordScreen({
   const requestInFlight = useRef(false);
 
   // Animations
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(20)).current;
+  const [fadeAnim] = useState(() => new Animated.Value(0));
+  const [slideAnim] = useState(() => new Animated.Value(20));
+
+  const [prevInitialStep, setPrevInitialStep] = useState(initialStep);
+  if (prevInitialStep !== initialStep) {
+    setPrevInitialStep(initialStep);
+    setStep(initialStep);
+  }
 
   const triggerAnimation = useCallback(() => {
     fadeAnim.setValue(0);
@@ -76,10 +82,6 @@ export default function ForgotPasswordScreen({
       }),
     ]).start();
   }, [fadeAnim, slideAnim]);
-
-  useEffect(() => {
-    setStep(initialStep);
-  }, [initialStep]);
 
   useEffect(() => {
     triggerAnimation();

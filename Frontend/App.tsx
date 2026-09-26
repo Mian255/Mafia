@@ -111,12 +111,9 @@ export default function App() {
     };
   }, [resolveSignedInDestination]);
 
-  // Leave the splash screen once its animation is done AND the session check has finished
-  useEffect(() => {
-    if (splashFinished && initialDestination) {
-      setCurrentScreen((prev) => (prev === 'splash' ? initialDestination : prev));
-    }
-  }, [splashFinished, initialDestination]);
+  if (currentScreen === 'splash' && splashFinished && initialDestination) {
+    setCurrentScreen(initialDestination);
+  }
 
   const handleSplashFinish = useCallback(() => {
     setSplashFinished(true);
