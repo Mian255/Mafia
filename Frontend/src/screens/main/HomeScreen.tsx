@@ -29,6 +29,8 @@ import SettingsScreen from "./SettingsScreen";
 interface HomeScreenProps {
   userAlias?: string;
   onLogout?: () => void;
+  onCreateRoom?: () => void;
+  onJoinRoom?: () => void;
 }
 
 interface UserStats {
@@ -45,7 +47,12 @@ interface UserProfile {
   avatar_url: string | null;
 }
 
-export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScreenProps) {
+export default function HomeScreen({
+  userAlias = "Player",
+  onLogout,
+  onCreateRoom,
+  onJoinRoom,
+}: HomeScreenProps) {
   const [activeTab, setActiveTab] = useState<NavTab>("play");
   const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
@@ -351,7 +358,11 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
             {/* Two Action Cards: Create Room & Join By Code */}
             <View style={styles.actionsGrid}>
               {/* CREATE ROOM */}
-              <TouchableOpacity style={styles.actionBox} activeOpacity={0.85}>
+              <TouchableOpacity
+                style={styles.actionBox}
+                activeOpacity={0.85}
+                onPress={onCreateRoom}
+              >
                 <View style={styles.actionIconPill}>
                   <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
                     <Circle cx="12" cy="12" r="9" stroke="#eab308" strokeWidth="2" />
@@ -370,7 +381,11 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
               </TouchableOpacity>
 
               {/* JOIN BY CODE */}
-              <TouchableOpacity style={styles.actionBox} activeOpacity={0.85}>
+              <TouchableOpacity
+                style={styles.actionBox}
+                activeOpacity={0.85}
+                onPress={onJoinRoom}
+              >
                 <View style={styles.actionIconPill}>
                   <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
                     <Rect x="4" y="4" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
@@ -386,7 +401,7 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
                 </View>
 
                 <Text style={styles.actionBoxTitle}>JOIN BY CODE</Text>
-                <Text style={styles.actionBoxSub}>Enter 6-Digit Room Key</Text>
+                <Text style={styles.actionBoxSub}>Enter 5-Digit Room Key</Text>
 
                 <View style={styles.actionBoxFooter}>
                   <Text style={[styles.actionBoxLink, { color: "#cbd5e1" }]}>

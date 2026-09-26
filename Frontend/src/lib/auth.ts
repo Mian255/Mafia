@@ -68,8 +68,10 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
  * or null if the user cancelled / closed the browser.
  */
 export async function signInWithGoogle(): Promise<Session | null> {
+  // Use a fixed scheme URI so Supabase allows the redirect across all devices and tunnel sessions
   const redirectUrl = makeRedirectUri({
     scheme: 'mafia',
+    path: 'auth/callback',
   });
 
   const { data, error } = await supabase.auth.signInWithOAuth({
