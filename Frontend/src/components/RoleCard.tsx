@@ -39,13 +39,19 @@ export const CHARACTER_IMAGES: Record<RoleId, any> = {
   civilian: require('../../assets/characters/civilian.png'),
 };
 
-// Prefetch asset URIs for instant zero-lag rendering
-Object.values(CHARACTER_IMAGES).forEach((source) => {
-  const resolved = Image.resolveAssetSource(source);
-  if (resolved?.uri) {
-    Image.prefetch(resolved.uri);
+// Optional prefetch helper to be called on runtime mount (not module evaluation)
+export const prefetchCharacterImages = () => {
+  try {
+    Object.values(CHARACTER_IMAGES).forEach((source) => {
+      const resolved = Image.resolveAssetSource(source);
+      if (resolved?.uri && !resolved.uri.startsWith("http")) {
+        Image.prefetch(resolved.uri).catch(() => {});
+      }
+    });
+  } catch {
+    // Ignore prefetch errors in dev/SSR
   }
-});
+};
 
 export const ROLES_DATA: Record<RoleId, RoleData> = {
   mafia: {

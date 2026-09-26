@@ -1,19 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Animated,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
-import { isNetworkError } from '../../lib/authHelpers';
 import {
   USERNAME_MAX_LENGTH,
   USERNAME_MIN_LENGTH,
@@ -21,80 +19,122 @@ import {
   saveUsername,
   validateUsername,
 } from '../../lib/profile';
-import { AuthTextInput } from '../../components/auth/AuthTextInput';
+import { rateLimiter } from '../../lib/rateLimit';
+import {
+  AuthCard,
+  AuthErrorBanner,
+  AuthHeader,
+  AuthPrimaryButton,
+  AuthTextInput,
+  NoirBackground,
+  renderUserIcon,
+  useAuthLayout,
+} from '../../components/auth';
 import { useStableCallback } from '../../hooks/useStableCallback';
 
 interface ProfileSetupScreenProps {
-  /** The signed-in user who still needs a username. */
   user: User;
-  /** Called after the username was saved. */
   onComplete: (username: string) => void;
 }
 
-type Availability = 'idle' | 'checking' | 'available' | 'taken' | 'unknown';
-type CheckResult = { name: string; status: 'available' | 'taken' | 'unknown' };
+type AvailabilityStatus = 'idle' | 'checking' | 'available' | 'taken';
 
-const AVAILABILITY_DEBOUNCE_MS = 500;
-const TAKEN_MESSAGE = 'Sorry, that username is already taken. Please try another one.';
-const CONNECTION_MESSAGE =
-  "We can't reach the server. Check your internet connection and try again.";
-const SAVE_FAILED_MESSAGE = "We couldn't save your username. Please try again.";
+const TAKEN_MESSAGE = 'That username is already taken. Try another.';
+const CONNECTION_MESSAGE = "Couldn't reach the server. Check your connection and try again.";
+const SAVE_FAILED_MESSAGE = "Couldn't save your username. Please try again in a moment.";
+
+function isNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const message = 'message' in err && typeof err.message === 'string' ? err.message : '';
+  return /network|fetch|timeout|failed to fetch/i.test(message);
+}
 
 export default function ProfileSetupScreen({ user, onComplete }: ProfileSetupScreenProps) {
+  const layout = useAuthLayout(false);
+
   const [username, setUsername] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  // Result of the last availability lookup, tied to the name it was made for.
-  const [lastCheck, setLastCheck] = useState<CheckResult | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityStatus>('idle');
   const [isSaving, setIsSaving] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestCheckId = useRef(0);
+  const [lastCheck, setLastCheck] = useState<{ name: string; status: AvailabilityStatus }>({
+    name: '',
+    status: 'idle',
+  });
   const requestInFlight = useRef(false);
+  const inputRef = useRef<TextInput>(null);
 
-  // Entrance animation (native driver, runs once on mount)
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [slideAnim] = useState(() => new Animated.Value(25));
+  const checkAvailability = useStableCallback(async (name: string, checkId: number) => {
+    // Rate limit check for username searches
+    const limitCheck = rateLimiter.checkLimit('usernameCheck', user.id);
+    if (!limitCheck.allowed) {
+      return;
+    }
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
-    ]).start();
-  }, [fadeAnim, slideAnim]);
-
-  const trimmedName = username.trim();
-  const isValidName = validateUsername(trimmedName) === null;
-  const availability: Availability = !isValidName
-    ? 'idle'
-    : lastCheck?.name === trimmedName
-      ? lastCheck.status
-      : 'checking';
-
-  // Live availability check, debounced so we don't query on every keystroke.
-  // Answers for an older name are ignored because `availability` only uses a matching result.
-  useEffect(() => {
-    if (!isValidName) return;
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      let status: CheckResult['status'];
-      try {
-        status = (await isUsernameAvailable(trimmedName, user.id)) ? 'available' : 'taken';
-      } catch {
-        // Not fatal: we check again when the user taps the button.
-        status = 'unknown';
+    try {
+      const free = await isUsernameAvailable(name, user.id);
+      if (latestCheckId.current === checkId) {
+        const nextStatus: AvailabilityStatus = free ? 'available' : 'taken';
+        setAvailability(nextStatus);
+        setLastCheck({ name, status: nextStatus });
+        if (!free) {
+          setFieldError(TAKEN_MESSAGE);
+        }
       }
-      if (!cancelled) setLastCheck({ name: trimmedName, status });
-    }, AVAILABILITY_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [trimmedName, isValidName, user.id]);
+    } catch {
+      if (latestCheckId.current === checkId) {
+        setAvailability('idle');
+      }
+    }
+  });
 
-  const handleUsernameChange = useCallback((text: string) => {
-    setUsername(text);
-    setFieldError((prev) => (prev ? '' : prev));
-    setErrorMessage((prev) => (prev ? '' : prev));
+  const handleUsernameChange = useCallback(
+    (text: string) => {
+      setUsername(text);
+      setErrorMessage('');
+
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+
+      const trimmed = text.trim();
+      const validationError = validateUsername(trimmed);
+
+      if (validationError) {
+        setFieldError(validationError);
+        setAvailability('idle');
+        return;
+      }
+
+      setFieldError('');
+
+      if (trimmed.toLowerCase() === lastCheck.name.toLowerCase()) {
+        setAvailability(lastCheck.status);
+        if (lastCheck.status === 'taken') {
+          setFieldError(TAKEN_MESSAGE);
+        }
+        return;
+      }
+
+      setAvailability('checking');
+      const checkId = ++latestCheckId.current;
+      debounceTimer.current = setTimeout(() => {
+        checkAvailability(trimmed, checkId);
+      }, 350);
+    },
+    [checkAvailability, lastCheck]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
   }, []);
 
   const handleSave = useStableCallback(async () => {
@@ -112,7 +152,6 @@ export default function ProfileSetupScreen({ user, onComplete }: ProfileSetupScr
     setErrorMessage('');
 
     try {
-      // Re-check right before saving; the unique constraint still guards against races.
       const available = await isUsernameAvailable(name, user.id);
       if (!available) {
         setLastCheck({ name, status: 'taken' });
@@ -141,7 +180,6 @@ export default function ProfileSetupScreen({ user, onComplete }: ProfileSetupScr
     requestInFlight.current = true;
     setIsSigningOut(true);
     try {
-      // App.tsx routes back to Login on the SIGNED_OUT event.
       await supabase.auth.signOut();
     } finally {
       requestInFlight.current = false;
@@ -152,58 +190,53 @@ export default function ProfileSetupScreen({ user, onComplete }: ProfileSetupScr
   const busy = isSaving || isSigningOut;
   const hint =
     availability === 'checking'
-      ? 'Checking if this name is free…'
+      ? 'Checking if username is free...'
       : availability === 'available'
-        ? 'Nice, this name is available.'
+        ? 'Username is available!'
         : `${USERNAME_MIN_LENGTH}–${USERNAME_MAX_LENGTH} characters: letters, numbers and _`;
   const shownError = fieldError || (availability === 'taken' ? TAKEN_MESSAGE : '');
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
+      <NoirBackground />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: layout.paddingTop,
+              paddingBottom: layout.paddingBottom,
+              paddingHorizontal: layout.paddingHorizontal,
+            },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <Animated.View
-            style={[
-              styles.contentCard,
-              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={styles.badgeRow}>
-                <View style={styles.crimsonDot} />
-                <Text style={styles.badgeText}>FINAL STEP</Text>
-                <View style={styles.goldDot} />
-              </View>
-              <Text style={styles.title}>CHOOSE YOUR ALIAS</Text>
-              <Text style={styles.subtitle}>
-                This is the name other players will see at the table.
+          {/* Header */}
+          <AuthHeader layout={layout} subtitle="CHOOSE YOUR USERNAME" />
+
+          <View style={styles.formWrapper}>
+            <AuthCard>
+              <Text style={styles.instructionText} maxFontSizeMultiplier={1.3}>
+                Choose a unique username that other players will see during games.
               </Text>
-            </View>
 
-            {errorMessage ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText} accessibilityLiveRegion="polite">
-                  {errorMessage}
-                </Text>
-              </View>
-            ) : null}
+              <AuthErrorBanner message={errorMessage} />
 
-            <View style={styles.form}>
               <AuthTextInput
-                label="Username"
+                ref={inputRef}
+                label="USERNAME"
+                variant="gold"
                 error={shownError}
                 hint={hint}
                 hintTone={availability === 'available' ? 'success' : 'muted'}
-                placeholder="e.g. ShadowVito"
+                renderIcon={renderUserIcon}
+                placeholder="e.g. ShadowPlayer"
                 value={username}
                 onChangeText={handleUsernameChange}
                 autoCapitalize="none"
@@ -216,32 +249,26 @@ export default function ProfileSetupScreen({ user, onComplete }: ProfileSetupScr
                 autoFocus
               />
 
-              <TouchableOpacity
-                style={[styles.primaryButton, busy && styles.buttonDisabled]}
+              <AuthPrimaryButton
+                label="CONFIRM USERNAME"
                 onPress={handleSave}
-                activeOpacity={0.85}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: busy, busy: isSaving }}
-              >
-                <View style={styles.buttonContent}>
-                  {isSaving ? (
-                    <ActivityIndicator color="#07090e" size="small" style={styles.buttonSpinner} />
-                  ) : null}
-                  <Text style={styles.primaryButtonText}>
-                    {isSaving ? 'SAVING...' : 'ENTER THE CITY'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+                loading={isSaving}
+                disabled={busy || availability === 'taken' || !!shownError}
+              />
+            </AuthCard>
+          </View>
 
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>Not you?</Text>
-              <TouchableOpacity onPress={handleSignOut} disabled={busy} activeOpacity={0.7}>
-                <Text style={styles.footerLink}>{isSigningOut ? ' Logging out…' : ' Log out'}</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
+          {/* Footer */}
+          <View style={styles.footerContainer}>
+            <Text style={styles.footerText} maxFontSizeMultiplier={1.3}>
+              Not you?
+            </Text>
+            <TouchableOpacity onPress={handleSignOut} disabled={busy} activeOpacity={0.7}>
+              <Text style={styles.footerLink} maxFontSizeMultiplier={1.3}>
+                {isSigningOut ? ' Logging out...' : ' Log out'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -251,140 +278,48 @@ export default function ProfileSetupScreen({ user, onComplete }: ProfileSetupScr
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#07090e',
+    backgroundColor: '#070e1a',
   },
   keyboardView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 36,
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  contentCard: {
-    backgroundColor: '#111622',
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(253, 230, 138, 0.22)',
-    maxWidth: 440,
+  formWrapper: {
     width: '100%',
-    alignSelf: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 10,
-  },
-  header: {
+    maxWidth: 480,
     alignItems: 'center',
-    marginBottom: 24,
+    marginVertical: 10,
   },
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  crimsonDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#e11d48',
-    marginRight: 8,
-  },
-  goldDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#fde68a',
-    marginLeft: 8,
-  },
-  badgeText: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 2.5,
-  },
-  title: {
-    color: '#fde68a',
-    fontSize: 26,
-    fontWeight: '900',
-    letterSpacing: 2.5,
-    marginBottom: 6,
-    textAlign: 'center',
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-    textShadowColor: 'rgba(217, 119, 6, 0.45)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 8,
-  },
-  subtitle: {
-    color: '#94a3b8',
+  instructionText: {
+    color: '#cbd5e1',
     fontSize: 13,
-    fontWeight: '500',
-    textAlign: 'center',
     lineHeight: 19,
-  },
-  errorBanner: {
-    backgroundColor: 'rgba(225, 29, 72, 0.15)',
-    borderWidth: 1,
-    borderColor: '#e11d48',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-  },
-  errorText: {
-    color: '#ff4d6d',
-    fontSize: 13,
-    fontWeight: '600',
     textAlign: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 8,
   },
-  form: {
+  footerContainer: {
     width: '100%',
-  },
-  primaryButton: {
-    backgroundColor: '#fde68a',
-    borderRadius: 12,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginTop: 8,
-    shadowColor: '#f59e0b',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonSpinner: {
-    marginRight: 8,
-  },
-  primaryButtonText: {
-    color: '#07090e',
-    fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 1.5,
-  },
-  footer: {
+    maxWidth: 480,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 22,
+    gap: 6,
+    marginTop: 14,
+    marginBottom: 10,
   },
   footerText: {
     color: '#94a3b8',
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '500',
   },
   footerLink: {
     color: '#fde68a',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

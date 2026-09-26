@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   KeyboardAvoidingView,
   Platform,
-  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -14,6 +12,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Path } from 'react-native-svg';
 import { fetchPublicRooms, joinRoomByCode } from '../../lib/rooms';
+import { SnapchatPullRefreshFlatList } from '../../components/refresh';
 import { useStableCallback } from '../../hooks/useStableCallback';
 import type { PublicRoomItem, Room } from '../../lib/rooms';
 
@@ -68,10 +67,18 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
     };
   }, [loadPublicRooms]);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    loadPublicRooms();
-  }, [loadPublicRooms]);
+    try {
+      const rooms = await fetchPublicRooms();
+      setPublicRooms(rooms);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    } catch {
+      // ignore
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   const handleJoinByCode = useStableCallback(async (targetCode?: string) => {
     const rawCode = targetCode || code;
@@ -235,20 +242,14 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
             <Text style={styles.loadingText}>Loading public rooms...</Text>
           </View>
         ) : (
-          <FlatList
+          <SnapchatPullRefreshFlatList<PublicRoomItem>
             data={publicRooms}
             keyExtractor={(item) => item.id}
             renderItem={renderPublicRoomItem}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor="#e11d48"
-                colors={['#e11d48']}
-              />
-            }
+            refreshing={refreshing}
+            onRefresh={onRefresh}
             ListEmptyComponent={
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyTitle}>NO PUBLIC ROOMS</Text>
