@@ -324,3 +324,82 @@ export async function leaveRoom(roomId: string, isHost: boolean): Promise<void> 
     await supabase.from('room_players').delete().eq('room_id', roomId).eq('user_id', user.id);
   }
 }
+
+/**
+ * Transfers host leadership of a room to another player.
+ */
+export async function transferHost(
+  roomId: string,
+  currentHostId: string,
+  newHostUserId: string
+): Promise<void> {
+  const { error: roomError } = await supabase
+    .from('rooms')
+    .update({ host_id: newHostUserId, updated_at: new Date().toISOString() })
+    .eq('id', roomId)
+    .eq('host_id', currentHostId);
+
+  if (roomError) throw new Error(roomError.message || 'Failed to transfer host.');
+
+  await Promise.all([
+    supabase
+      .from('room_players')
+      .update({ is_host: false })
+      .eq('room_id', roomId)
+      .eq('user_id', currentHostId),
+    supabase
+      .from('room_players')
+      .update({ is_host: true })
+      .eq('room_id', roomId)
+      .eq('user_id', newHostUserId),
+  ]);
+}
+
+/**
+ * Kicks/removes a player from the room (Host only).
+ */
+export async function kickPlayer(roomId: string, targetUserId: string): Promise<void> {
+  const { error } = await supabase
+    .from('room_players')
+    .delete()
+    .eq('room_id', roomId)
+    .eq('user_id', targetUserId);
+
+  if (error) throw new Error(error.message || 'Failed to remove player.');
+}
+
+/**
+ * Fetches current room settings.
+ */
+export async function fetchRoomSettings(roomId: string): Promise<RoomSettings | null> {
+  const { data, error } = await supabase
+    .from('room_settings')
+    .select('*')
+    .eq('room_id', roomId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return data;
+}
+
+/**
+ * Updates room settings (Host only).
+ */
+export async function updateRoomSettings(
+  roomId: string,
+  settings: Partial<Omit<RoomSettings, 'room_id'>>
+): Promise<RoomSettings> {
+  const { ...updatePayload } = settings;
+  const { data, error } = await supabase
+    .from('room_settings')
+    .update({
+      ...updatePayload,
+      updated_at: new Date().toISOString(),
+    } as never)
+    .eq('room_id', roomId)
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(error?.message || 'Failed to update game rules.');
+  return data as RoomSettings;
+}

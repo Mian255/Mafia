@@ -401,11 +401,11 @@ export default function HomeScreen({
                 </View>
 
                 <Text style={styles.actionBoxTitle}>JOIN BY CODE</Text>
-                <Text style={styles.actionBoxSub}>Enter 5-Digit Room Key</Text>
+                <Text style={styles.actionBoxSub}>Enter 5-Digit Room Code</Text>
 
                 <View style={styles.actionBoxFooter}>
                   <Text style={[styles.actionBoxLink, { color: "#cbd5e1" }]}>
-                    DIRECT ENTRY 🔑
+                    JOIN ROOM ➔
                   </Text>
                 </View>
               </TouchableOpacity>
