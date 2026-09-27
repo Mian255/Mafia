@@ -26,6 +26,7 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
   const [contentFadeAnim] = useState(() => new Animated.Value(0));
   const [contentSlideAnim] = useState(() => new Animated.Value(20));
   const [progressAnim] = useState(() => new Animated.Value(0));
+  const [shimmerAnim] = useState(() => new Animated.Value(0));
   const [progressPercent, setProgressPercent] = useState(0);
 
   // Keep the latest onFinish in a ref: the parent re-renders during the splash (session check),
@@ -64,15 +65,38 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
-        Animated.timing(progressAnim, {
-          toValue: 1,
-          duration: durationMs - 800,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: false,
-        }),
       ]),
     ]);
     entrance.start();
+
+    // 1b. Organic staged loading: eased keyframes instead of one uniform curve, so the
+    // bar sweeps, hesitates briefly at milestones, then eases into 100% smoothly.
+    const progressSteps = [0.12, 0.28, 0.4, 0.52, 0.68, 0.82, 0.92, 1];
+    const stepWeights = progressSteps.map((_, index) => (index % 2 === 0 ? 1.4 : 0.8));
+    const weightSum = stepWeights.reduce((sum, weight) => sum + weight, 0);
+    const totalLoadMs = Math.max(600, durationMs - 800);
+    const loadSequence = Animated.sequence(
+      progressSteps.map((step, index) =>
+        Animated.timing(progressAnim, {
+          toValue: step,
+          duration: Math.max(70, Math.round((stepWeights[index] / weightSum) * totalLoadMs)),
+          easing: Easing.bezier(0.65, 0, 0.35, 1),
+          useNativeDriver: false,
+        })
+      )
+    );
+    loadSequence.start();
+
+    // 1c. Soft light sweep across the bar so it feels alive while loading.
+    const shimmer = Animated.loop(
+      Animated.timing(shimmerAnim, {
+        toValue: 1,
+        duration: 1500,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      })
+    );
+    shimmer.start();
 
     // 2. Smooth fade-out exit when loading completes
     let exit: Animated.CompositeAnimation | null = null;
@@ -92,9 +116,11 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
       progressAnim.removeListener(listenerId);
       clearTimeout(exitTimer);
       entrance.stop();
+      loadSequence.stop();
+      shimmer.stop();
       exit?.stop();
     };
-  }, [durationMs, screenOpacity, contentFadeAnim, contentSlideAnim, progressAnim]);
+  }, [durationMs, screenOpacity, contentFadeAnim, contentSlideAnim, progressAnim, shimmerAnim]);
 
   return (
     <Animated.View style={[styles.container, { opacity: screenOpacity }]}>
@@ -145,11 +171,11 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
           <View style={styles.artDecoLine} />
         </View>
 
-        {/* Main Title: NOIR & CRIME */}
-        <Text style={styles.mainTitleText}>NOIR & CRIME</Text>
+        {/* Main Title: MAFIA */}
+        <Text style={styles.mainTitleText}>MAFIA</Text>
 
-        {/* Subtitle: MOBILE DETECTIVE ADVENTURE */}
-        <Text style={styles.subtitleText}>MOBILE DETECTIVE ADVENTURE</Text>
+        {/* Subtitle: TRUST NO ONE */}
+        <Text style={styles.subtitleText}>TRUST NO ONE</Text>
 
         {/* Dynamic Animated Progress Bar */}
         <View style={styles.progressBarContainer}>
@@ -165,15 +191,37 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
                 },
               ]}
             >
+              {/* Lighter leading-edge cap so the fill reads clearly as it grows left to right */}
+              <View style={styles.progressFillEdge} />
+            </Animated.View>
+
+            {/* Soft Light Sweep for a Premium Feel */}
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.progressShimmer,
+                {
+                  transform: [
+                    {
+                      translateX: shimmerAnim.interpolate({
+                        inputRange: [0, 1],
+                        // Pixel-based so it works reliably with the native driver on Android.
+                        outputRange: [-SCREEN_WIDTH * 0.4, SCREEN_WIDTH * 0.8],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
               <Svg width="100%" height="100%" preserveAspectRatio="none">
                 <Defs>
-                  <LinearGradient id="goldProgressGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <Stop offset="0%" stopColor="#d97706" />
-                    <Stop offset="50%" stopColor="#fde68a" />
-                    <Stop offset="100%" stopColor="#fef08a" />
+                  <LinearGradient id="shimmerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <Stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+                    <Stop offset="50%" stopColor="#ffffff" stopOpacity="0.28" />
+                    <Stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
                   </LinearGradient>
                 </Defs>
-                <Rect x="0" y="0" width="100%" height="100%" fill="url(#goldProgressGrad)" />
+                <Rect x="0" y="0" width="100%" height="100%" fill="url(#shimmerGrad)" />
               </Svg>
             </Animated.View>
 
@@ -239,7 +287,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  /* Main Title: NOIR & CRIME */
+  /* Main Title: MAFIA */
   mainTitleText: {
     color: '#fef3c7',
     fontSize: SCREEN_WIDTH * 0.115,
@@ -254,7 +302,7 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
 
-  /* Subtitle: MOBILE DETECTIVE ADVENTURE */
+  /* Subtitle: TRUST NO ONE */
   subtitleText: {
     color: '#fde68a',
     fontSize: SCREEN_WIDTH * 0.033,
@@ -283,8 +331,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
     justifyContent: 'center',
-    shadowColor: '#d97706',
-    shadowOpacity: 0.35,
+    shadowColor: '#dc2626',
+    shadowOpacity: 0.45,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 1 },
     elevation: 4,
@@ -294,8 +342,24 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
+    backgroundColor: '#dc2626',
     borderRadius: 9,
     overflow: 'hidden',
+  },
+  progressFillEdge: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 5,
+    backgroundColor: '#f87171',
+  },
+  progressShimmer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: '40%',
   },
   percentTextContainer: {
     position: 'absolute',
@@ -308,13 +372,13 @@ const styles = StyleSheet.create({
     zIndex: 5,
   },
   percentText: {
-    color: '#1a1005',
+    color: '#fde68a',
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    textShadowColor: 'rgba(255, 255, 255, 0.4)',
-    textShadowOffset: { width: 0, height: 0.5 },
-    textShadowRadius: 2,
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
 });
