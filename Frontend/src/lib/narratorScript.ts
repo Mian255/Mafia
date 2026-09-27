@@ -56,12 +56,12 @@ export const PHASE_NARRATION: Record<GamePhase, Narration> = {
   },
   night_mafia: {
     intro: {
-      flavor: 'Midnight. The streetlights drown in fog, and the family stirs.',
+      flavor: 'Midnight. The streetlights drown in fog, and the mafia stirs.',
       instruction: 'Mafia, choose your target. Everyone else, sleep with one eye open.',
     },
     idle: {
       flavor: 'A cigarette burns down in the dark, waiting on a decision.',
-      instruction: 'The family is still deciding...',
+      instruction: 'The mafia is still deciding...',
     },
   },
   night_doctor: {
@@ -129,12 +129,12 @@ export const WINNER_NARRATION: Record<GameWinner, { headline: string; epilogue: 
   town: {
     headline: 'THE TOWN PREVAILS',
     epilogue:
-      'The last of the family is dragged into the light. The city exhales — honest streets, for a while.',
+      'The last of the mafia is dragged into the light. The city exhales — honest streets, for a while.',
   },
   mafia: {
     headline: 'THE MAFIA WINS',
     epilogue:
-      'The town never saw it coming. Silk gloves, cold blood — the syndicate owns the night again.',
+      'The town never saw it coming. Silk gloves, cold blood — the mafia owns the night again.',
   },
   draw: {
     headline: 'STALEMATE',
