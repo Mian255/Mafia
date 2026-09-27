@@ -132,7 +132,7 @@ export const WINNER_NARRATION: Record<GameWinner, { headline: string; epilogue: 
       'The last of the family is dragged into the light. The city exhales — honest streets, for a while.',
   },
   mafia: {
-    headline: 'THE FAMILY WINS',
+    headline: 'THE MAFIA WINS',
     epilogue:
       'The town never saw it coming. Silk gloves, cold blood — the syndicate owns the night again.',
   },
