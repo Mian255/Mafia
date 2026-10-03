@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { BackHandler, Linking, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { User } from '@supabase/supabase-js';
 import SplashScreen from './src/screens/auth/SplashScreen';
@@ -11,6 +11,7 @@ import HomeScreen from './src/screens/main/HomeScreen';
 import CreateRoomScreen from './src/screens/room/CreateRoomScreen';
 import JoinRoomScreen from './src/screens/room/JoinRoomScreen';
 import LobbyScreen from './src/screens/room/LobbyScreen';
+import GameScreen from './src/screens/game/GameScreen';
 import { supabase } from './src/lib/supabase';
 import { createSessionFromUrl } from './src/lib/auth';
 import { getDisplayName } from './src/lib/authHelpers';
@@ -26,7 +27,8 @@ type ScreenState =
   | 'home'
   | 'create-room'
   | 'join-room'
-  | 'lobby';
+  | 'lobby'
+  | 'game';
 
 /** Screens that require a signed-in user. Losing the session on one of these returns to Login. */
 const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
@@ -35,7 +37,30 @@ const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
   'create-room',
   'join-room',
   'lobby',
+  'game',
 ]);
+
+/** Pre-auth entry screens. A user becoming authenticated on one of these should be routed onward. */
+const AUTH_ENTRY_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
+  'splash',
+  'login',
+  'signup',
+]);
+
+/**
+ * Android hardware-back navigation map for the custom screen state machine.
+ * Screens absent from this map (home, login, splash) are treated as roots and
+ * let the OS handle back (i.e. exit the app).
+ */
+const BACK_NAVIGATION: Partial<Record<ScreenState, ScreenState>> = {
+  signup: 'login',
+  'forgot-password': 'login',
+  'profile-setup': 'login',
+  'create-room': 'home',
+  'join-room': 'home',
+  lobby: 'home',
+  game: 'home',
+};
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenState>('splash');
@@ -45,6 +70,10 @@ export default function App() {
   const [initialDestination, setInitialDestination] = useState<ScreenState | null>(null);
   const [splashFinished, setSplashFinished] = useState(false);
   const [recoveryStep, setRecoveryStep] = useState<ForgotPasswordStep>('request');
+
+  // Always-current screen value for use inside stable listeners (e.g. BackHandler).
+  const currentScreenRef = useRef<ScreenState>(currentScreen);
+  currentScreenRef.current = currentScreen;
 
   /**
    * Decides where a signed-in user goes: Profile Setup until they have chosen a username,
@@ -69,18 +98,21 @@ export default function App() {
     const chosenName = status.username ?? getDisplayName(user);
     setUserAlias(chosenName);
 
-    // 3. Cache to auth metadata so future launches load instantly
-    try {
-      supabase.auth.updateUser({ data: { username: chosenName, username_set: true } });
-    } catch {
-      // ignore
-    }
+    // 3. Cache to auth metadata so future launches load instantly.
+    // Fire-and-forget so navigation is not blocked, but catch rejections so
+    // they don't escape as unhandled promise rejections.
+    void supabase.auth
+      .updateUser({ data: { username: chosenName, username_set: true } })
+      .catch(() => {
+        // ignore – best-effort cache
+      });
 
     return 'home';
   }, []);
 
   useEffect(() => {
     let isMounted = true;
+    let hasSession = false;
 
     // 1. Check the persisted Supabase session on app launch
     const checkInitialSession = async () => {
@@ -89,6 +121,7 @@ export default function App() {
           data: { session },
         } = await supabase.auth.getSession();
         if (!isMounted) return;
+        hasSession = !!session?.user;
         if (session?.user) {
           const destination = await resolveSignedInDestination(session.user);
           if (isMounted) setInitialDestination(destination);
@@ -102,6 +135,13 @@ export default function App() {
 
     checkInitialSession();
 
+    // Fallback: never let the splash hang forever if session resolution stalls
+    // (e.g. getUsernameStatus never resolves). Default to a safe destination.
+    const fallbackTimer = setTimeout(() => {
+      if (!isMounted) return;
+      setInitialDestination((prev) => prev ?? (hasSession ? 'home' : 'login'));
+    }, 7000);
+
     // 2. Subscribe to auth state changes
     const {
       data: { subscription },
@@ -111,6 +151,14 @@ export default function App() {
         setCurrentScreen('forgot-password');
       } else if (event === 'USER_UPDATED' && session?.user) {
         setCurrentUser(session.user);
+      } else if (event === 'SIGNED_IN' && session?.user) {
+        // A user became authenticated outside the normal login-callback path
+        // (e.g. magic link / deep link). Route them onward, but only if we are
+        // still on a pre-auth entry screen so we don't fight onLoginSuccess or
+        // interrupt the recovery flow.
+        const destination = await resolveSignedInDestination(session.user);
+        if (!isMounted) return;
+        setCurrentScreen((prev) => (AUTH_ENTRY_SCREENS.has(prev) ? destination : prev));
       } else if (event === 'SIGNED_OUT') {
         setUserAlias('Agent');
         setCurrentUser(null);
@@ -136,20 +184,50 @@ export default function App() {
     };
 
     const linkingSub = Linking.addEventListener('url', handleDeepLink);
-    Linking.getInitialURL().then((url) => {
-      if (url) handleDeepLink({ url });
-    });
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url) handleDeepLink({ url });
+      })
+      .catch(() => {
+        // ignore – no initial URL / linking unavailable
+      });
 
     return () => {
       isMounted = false;
+      clearTimeout(fallbackTimer);
       subscription.unsubscribe();
       linkingSub.remove();
     };
   }, [resolveSignedInDestination]);
 
-  if (currentScreen === 'splash' && splashFinished && initialDestination) {
-    setCurrentScreen(initialDestination);
-  }
+  // Transition from the splash screen to the resolved destination once the
+  // splash animation is done and we know where to go. Done in an effect (not
+  // in the render body) to avoid setState-during-render.
+  useEffect(() => {
+    if (splashFinished && initialDestination) {
+      setCurrentScreen((prev) => (prev === 'splash' ? initialDestination : prev));
+    }
+  }, [splashFinished, initialDestination]);
+
+  // Map the Android hardware back button onto the in-app navigation state machine.
+  useEffect(() => {
+    const onBackPress = () => {
+      const screen = currentScreenRef.current;
+      const target = BACK_NAVIGATION[screen];
+      if (!target) {
+        // Root screens (home, login, splash): allow default (exit app).
+        return false;
+      }
+      if (screen === 'lobby' || screen === 'game') {
+        setActiveRoom(null);
+      }
+      setCurrentScreen(target);
+      return true;
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => backSub.remove();
+  }, []);
 
   const handleSplashFinish = useCallback(() => {
     setSplashFinished(true);
@@ -192,6 +270,17 @@ export default function App() {
   }, []);
 
   const handleLeaveLobby = useCallback(() => {
+    setActiveRoom(null);
+    setCurrentScreen('home');
+  }, []);
+
+  const handleStartGame = useCallback(() => {
+    // The game row already exists (LobbyScreen called the start_game RPC); every
+    // client — host and non-host — routes here off the lobby's realtime signal.
+    setCurrentScreen('game');
+  }, []);
+
+  const handleExitGame = useCallback(() => {
     setActiveRoom(null);
     setCurrentScreen('home');
   }, []);
@@ -265,10 +354,15 @@ export default function App() {
             room={activeRoom}
             currentUserId={currentUser.id}
             onLeave={handleLeaveLobby}
-            onStartGame={(roomId) => {
-              // Future Phase 4: Route to GameScreen
-              console.log('Game Starting for room:', roomId);
-            }}
+            onStartGame={handleStartGame}
+          />
+        )}
+
+        {currentScreen === 'game' && activeRoom && currentUser && (
+          <GameScreen
+            room={activeRoom}
+            currentUserId={currentUser.id}
+            onExit={handleExitGame}
           />
         )}
       </View>

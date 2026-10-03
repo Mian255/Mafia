@@ -22,9 +22,7 @@ import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 interface FriendItem {
   id: string;
   username: string;
-  email?: string | null;
   avatar_url: string | null;
-  isOnline?: boolean;
 }
 
 interface FriendRequestItem {
@@ -38,7 +36,6 @@ interface FriendRequestItem {
 interface SearchUserResult {
   id: string;
   username: string;
-  email?: string | null;
   avatar_url: string | null;
   isFriend: boolean;
   hasPendingRequest: boolean;
@@ -62,6 +59,7 @@ export default function FriendsScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const activeSearchTokenRef = useRef<number>(0);
   const searchDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadTokenRef = useRef(0);
 
   // Modals & Action States
   const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
@@ -73,15 +71,22 @@ export default function FriendsScreen() {
     null
   );
 
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
-    setTimeout(() => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
       setToastMessage(null);
+      toastTimerRef.current = null;
     }, 4000);
-  };
+  }, []);
 
   // 1. Data Fetch & Refresh Logic
   const loadFriendsData = useCallback(async () => {
+    const token = ++loadTokenRef.current;
     try {
       const {
         data: { user },
@@ -99,47 +104,70 @@ export default function FriendsScreen() {
           ).catch(() => {});
         }
 
-        const { data: friendshipsData } = await supabase
+        // Friendships are stored as a single directed row (user_id = accepter,
+        // friend_id = sender) but are visible to both parties, so read both sides.
+        const { data: friendshipsData, error: friendshipsErr } = await supabase
           .from('friendships')
-          .select('friend_id')
-          .eq('user_id', user.id);
+          .select('user_id, friend_id')
+          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
-        const friendIds = friendshipsData
-          ? friendshipsData.map((f: { friend_id: string }) => f.friend_id)
-          : [];
+        if (token !== loadTokenRef.current) return;
 
-        if (friendIds.length > 0) {
-          const { data: friendProfiles } = await supabase
-            .from('profiles')
-            .select('id, username, email, avatar_url')
-            .in('id', friendIds);
-
-          if (friendProfiles) {
-            const formattedFriends: FriendItem[] = friendProfiles.map((p: any) => ({
-              id: p.id,
-              username: p.username || 'Player',
-              email: p.email || null,
-              avatar_url: p.avatar_url,
-              isOnline: true,
-            }));
-            setFriends(formattedFriends);
-          }
+        if (friendshipsErr) {
+          // Preserve the existing list on a transient read error.
+          showToast('Could not refresh your friends list', 'error');
         } else {
-          setFriends([]);
+          const friendIds = Array.from(
+            new Set(
+              (friendshipsData || [])
+                .map((f: { user_id: string; friend_id: string }) =>
+                  f.user_id === user.id ? f.friend_id : f.user_id
+                )
+                .filter((id: string) => id && id !== user.id)
+            )
+          );
+
+          if (friendIds.length > 0) {
+            const { data: friendProfiles, error: friendProfilesErr } = await supabase
+              .from('profiles')
+              .select('id, username, avatar_url')
+              .in('id', friendIds);
+
+            if (token !== loadTokenRef.current) return;
+
+            if (friendProfilesErr) {
+              showToast('Could not load friend profiles', 'error');
+            } else if (friendProfiles) {
+              const formattedFriends: FriendItem[] = friendProfiles.map((p: any) => ({
+                id: p.id,
+                username: p.username || 'Player',
+                avatar_url: p.avatar_url,
+              }));
+              setFriends(formattedFriends);
+            }
+          } else {
+            setFriends([]);
+          }
         }
 
-        const { data: incomingRequests } = await supabase
+        const { data: incomingRequests, error: incomingErr } = await supabase
           .from('friend_requests')
           .select('id, sender_id, created_at')
           .eq('receiver_id', user.id)
           .eq('status', 'pending');
 
-        if (incomingRequests && incomingRequests.length > 0) {
+        if (token !== loadTokenRef.current) return;
+
+        if (incomingErr) {
+          showToast('Could not load friend requests', 'error');
+        } else if (incomingRequests && incomingRequests.length > 0) {
           const senderIds = incomingRequests.map((r: { sender_id: string }) => r.sender_id);
           const { data: sendersProfiles } = await supabase
             .from('profiles')
             .select('id, username, avatar_url')
             .in('id', senderIds);
+
+          if (token !== loadTokenRef.current) return;
 
           const profileMap = new Map();
           if (sendersProfiles) {
@@ -162,23 +190,27 @@ export default function FriendsScreen() {
           setPendingRequests([]);
         }
 
-        const { data: sentReqs } = await supabase
+        const { data: sentReqs, error: sentErr } = await supabase
           .from('friend_requests')
           .select('receiver_id')
           .eq('sender_id', user.id)
           .eq('status', 'pending');
 
-        if (sentReqs) {
+        if (token !== loadTokenRef.current) return;
+
+        if (!sentErr && sentReqs) {
           setSentRequestsSet(new Set(sentReqs.map((r: { receiver_id: string }) => r.receiver_id)));
         }
       }
     } catch (err) {
       console.error('Error loading friends data:', err);
     } finally {
-      setIsLoading(false);
-      setRefreshing(false);
+      if (token === loadTokenRef.current) {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [showToast]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -190,6 +222,19 @@ export default function FriendsScreen() {
     let isMounted = true;
     let friendsChannel: ReturnType<typeof supabase.channel> | null = null;
     let requestsChannel: ReturnType<typeof supabase.channel> | null = null;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Coalesce realtime bursts (accepting a request emits several events) into a
+    // single debounced reload. The token guard inside loadFriendsData still drops
+    // any stale response that resolves out of order.
+    const scheduleReload = () => {
+      if (!isMounted) return;
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        if (isMounted) loadFriendsData();
+      }, 300);
+    };
 
     const setupLiveListeners = async () => {
       try {
@@ -197,47 +242,54 @@ export default function FriendsScreen() {
           data: { user },
         } = await supabase.auth.getUser();
 
-        if (user && isMounted) {
-          await loadFriendsData();
-
-          requestsChannel = supabase
-            .channel(`incoming_requests_${user.id}`)
-            .on(
-              'postgres_changes',
-              {
-                event: '*',
-                schema: 'public',
-                table: 'friend_requests',
-                filter: `receiver_id=eq.${user.id}`,
-              },
-              () => {
-                if (isMounted) {
-                  loadFriendsData();
-                }
-              }
-            )
-            .subscribe();
-
-          friendsChannel = supabase
-            .channel(`friendships_live_${user.id}`)
-            .on(
-              'postgres_changes',
-              {
-                event: '*',
-                schema: 'public',
-                table: 'friendships',
-                filter: `user_id=eq.${user.id}`,
-              },
-              () => {
-                if (isMounted) {
-                  loadFriendsData();
-                }
-              }
-            )
-            .subscribe();
-        } else if (isMounted) {
-          setIsLoading(false);
+        if (!user) {
+          if (isMounted) setIsLoading(false);
+          return;
         }
+
+        await loadFriendsData();
+
+        // Re-check after the await: the component may have unmounted while the
+        // initial load was in flight, so don't create channels we can't clean up.
+        if (!isMounted) return;
+
+        requestsChannel = supabase
+          .channel(`incoming_requests_${user.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'friend_requests',
+              filter: `receiver_id=eq.${user.id}`,
+            },
+            scheduleReload
+          )
+          .subscribe();
+
+        friendsChannel = supabase
+          .channel(`friendships_live_${user.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'friendships',
+              filter: `user_id=eq.${user.id}`,
+            },
+            scheduleReload
+          )
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'friendships',
+              filter: `friend_id=eq.${user.id}`,
+            },
+            scheduleReload
+          )
+          .subscribe();
       } catch (err) {
         console.error('Error initializing listeners:', err);
         if (isMounted) setIsLoading(false);
@@ -251,53 +303,55 @@ export default function FriendsScreen() {
       if (searchDebounceTimerRef.current) {
         clearTimeout(searchDebounceTimerRef.current);
       }
+      if (reloadTimer) clearTimeout(reloadTimer);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (requestsChannel) supabase.removeChannel(requestsChannel);
       if (friendsChannel) supabase.removeChannel(friendsChannel);
     };
   }, [loadFriendsData]);
 
-  // 3. Auto-Suggest Execution Logic (Searching username OR email)
+  // 3. Auto-Suggest Execution Logic (username-only, parameterized search)
   const executeSuggestQuery = useCallback(
     async (queryText: string, searchToken: number) => {
       try {
         const friendIdsSet = new Set(friends.map((f) => f.id));
 
-        // Query profiles matching username OR email substring
-        let dbQuery = supabase
+        // Escape LIKE metacharacters so user input cannot act as wildcards, and
+        // pass the term as a value via .ilike() rather than interpolating it into
+        // a raw .or() string (which would allow PostgREST filter injection).
+        const escaped = queryText.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+        const { data: matchedProfiles, error: searchErr } = await supabase
           .from('profiles')
-          .select('id, username, email, avatar_url')
-          .or(`username.ilike.%${queryText}%,email.ilike.%${queryText}%`)
+          .select('id, username, avatar_url')
+          .ilike('username', `%${escaped}%`)
           .limit(20);
 
-        let { data: matchedProfiles, error: searchErr } = await dbQuery;
+        if (searchToken !== activeSearchTokenRef.current) {
+          return;
+        }
 
-        // Fallback to username only if needed
         if (searchErr) {
-          const fallbackRes = await supabase
-            .from('profiles')
-            .select('id, username, avatar_url')
-            .ilike('username', `%${queryText}%`)
-            .limit(20);
-          matchedProfiles = fallbackRes.data as any;
+          console.error('Error suggesting players:', searchErr);
+          setSearchResults([]);
+          setIsSearching(false);
+          return;
         }
 
-        if (searchToken === activeSearchTokenRef.current) {
-          if (matchedProfiles && matchedProfiles.length > 0) {
-            const results: SearchUserResult[] = matchedProfiles.map((p: any) => ({
-              id: p.id,
-              username: p.username || 'Player',
-              email: p.email || null,
-              avatar_url: p.avatar_url,
-              isFriend: friendIdsSet.has(p.id),
-              hasPendingRequest: sentRequestsSet.has(p.id),
-              isSelf: p.id === currentUserId,
-            }));
-            setSearchResults(results);
-          } else {
-            setSearchResults([]);
-          }
-          setIsSearching(false);
+        if (matchedProfiles && matchedProfiles.length > 0) {
+          const results: SearchUserResult[] = matchedProfiles.map((p: any) => ({
+            id: p.id,
+            username: p.username || 'Player',
+            avatar_url: p.avatar_url,
+            isFriend: friendIdsSet.has(p.id),
+            hasPendingRequest: sentRequestsSet.has(p.id),
+            isSelf: p.id === currentUserId,
+          }));
+          setSearchResults(results);
+        } else {
+          setSearchResults([]);
         }
+        setIsSearching(false);
       } catch (err) {
         if (searchToken === activeSearchTokenRef.current) {
           console.error('Error suggesting players:', err);
@@ -340,8 +394,47 @@ export default function FriendsScreen() {
     }
     if (sendingRequestUserId) return;
 
+    // Guard: cannot befriend yourself.
+    if (targetUserId === currentUserId) {
+      showToast('You cannot send a friend request to yourself', 'error');
+      return;
+    }
+
+    // Guard: already friends.
+    if (friends.some((f) => f.id === targetUserId)) {
+      showToast(`You are already friends with ${targetUsername}`, 'error');
+      return;
+    }
+
+    // Guard: they already sent us a pending request -> accept it instead of
+    // creating a duplicate in the opposite direction.
+    const reciprocal = pendingRequests.find((r) => r.sender_id === targetUserId);
+    if (reciprocal) {
+      await handleAcceptRequest(reciprocal);
+      return;
+    }
+
+    // Guard: we already have a pending outbound request.
+    if (sentRequestsSet.has(targetUserId)) {
+      showToast(`Friend request already sent to ${targetUsername}`, 'error');
+      return;
+    }
+
     setSendingRequestUserId(targetUserId);
     try {
+      // Best-effort block check (RLS only exposes rows where we are the blocker).
+      const { data: blockedRows } = await supabase
+        .from('blocked_users')
+        .select('id')
+        .eq('blocker_id', currentUserId)
+        .eq('blocked_id', targetUserId)
+        .limit(1);
+
+      if (blockedRows && blockedRows.length > 0) {
+        showToast(`You have blocked ${targetUsername}. Unblock them to send a request.`, 'error');
+        return;
+      }
+
       const { error } = await supabase.from('friend_requests').insert({
         sender_id: currentUserId,
         receiver_id: targetUserId,
@@ -349,7 +442,13 @@ export default function FriendsScreen() {
       } as never);
 
       if (error) {
-        showToast(error.message, 'error');
+        const isDuplicate =
+          (error as { code?: string }).code === '23505' ||
+          /duplicate|unique/i.test(error.message || '');
+        showToast(
+          isDuplicate ? `Friend request already sent to ${targetUsername}` : error.message,
+          'error'
+        );
       } else {
         setSentRequestsSet((prev) => new Set([...prev, targetUserId]));
         setSearchResults((prev) =>
@@ -373,23 +472,20 @@ export default function FriendsScreen() {
 
     setProcessingRequestId(request.id);
     try {
-      const { error: reqErr } = await supabase
-        .from('friend_requests')
-        .update({ status: 'accepted' } as never)
-        .eq('id', request.id);
+      // Atomic server-side accept: updates the request status AND creates the
+      // friendship in one transaction. Only claim success once it resolves.
+      const { error } = await supabase.rpc('accept_friend_request', {
+        p_request_id: request.id,
+      } as never);
 
-      if (reqErr) {
-        showToast(reqErr.message, 'error');
+      if (error) {
+        // Keep the request in the list so the user can retry.
+        showToast(error.message || 'Could not accept friend request', 'error');
         return;
       }
 
-      await supabase.from('friendships').insert([
-        { user_id: currentUserId, friend_id: request.sender_id },
-        { user_id: request.sender_id, friend_id: currentUserId },
-      ] as never);
-
-      showToast(`You are now friends with ${request.sender_username}!`);
       setPendingRequests((prev) => prev.filter((r) => r.id !== request.id));
+      showToast(`You are now friends with ${request.sender_username}!`);
       await loadFriendsData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error accepting friend request';
@@ -467,7 +563,7 @@ export default function FriendsScreen() {
             style={styles.searchInput}
             value={searchQuery}
             onChangeText={handleSearchChange}
-            placeholder="Search by username or email..."
+            placeholder="Search by username..."
             placeholderTextColor="#475569"
             autoCapitalize="none"
             autoCorrect={false}
@@ -568,9 +664,7 @@ export default function FriendsScreen() {
                               </View>
                             )}
                           </View>
-                          <Text style={styles.userSubText}>
-                            {user.email ? user.email : 'Registered Player'}
-                          </Text>
+                          <Text style={styles.userSubText}>Registered Player</Text>
                         </View>
 
                         {/* Action Button */}
@@ -621,7 +715,7 @@ export default function FriendsScreen() {
                   <Text style={styles.emptyStateEmoji}>👥</Text>
                   <Text style={styles.emptyStateTitle}>No Friends Added Yet</Text>
                   <Text style={styles.emptyStateSub}>
-                    Start typing a username or email in the search bar above to see live suggestions and add players.
+                    Start typing a username in the search bar above to see live suggestions and add players.
                   </Text>
                 </View>
               ) : (
@@ -641,13 +735,11 @@ export default function FriendsScreen() {
                               {(friend.username || 'P').charAt(0).toUpperCase()}
                             </Text>
                           )}
-                          <View style={styles.onlineDot} />
                         </View>
 
                         {/* Details */}
                         <View style={styles.userInfoCol}>
                           <Text style={styles.userNameText}>{friend.username}</Text>
-                          <Text style={styles.onlineStatusText}>Online</Text>
                         </View>
                       </View>
                     );

@@ -80,12 +80,21 @@ export default function CreateRoomScreen({ onBack, onRoomCreated }: CreateRoomSc
     setErrorMessage('');
 
     try {
+      // Defense-in-depth: never send an out-of-range mafia_count even if the UI
+      // state somehow drifts. Guarantee 1 <= mafia_count < capacity and that at
+      // least one civilian remains after the enabled special roles are seated.
+      const enabledSpecialRoles = (doctorEnabled ? 1 : 0) + (detectiveEnabled ? 1 : 0);
+      const safeMafiaCount = Math.max(
+        1,
+        Math.min(effectiveMafiaCount, maxAllowedMafia, maxPlayers - enabledSpecialRoles - 1)
+      );
+
       const { room } = await createRoom({
         name: roomName.trim() || 'Mafia Room',
         isPublic,
         maxPlayers,
         settings: {
-          mafia_count: effectiveMafiaCount,
+          mafia_count: safeMafiaCount,
           doctor_enabled: doctorEnabled,
           detective_enabled: detectiveEnabled,
           night_duration_seconds: nightDuration,

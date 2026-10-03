@@ -20,7 +20,9 @@ port = 54323
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:3000"
-additional_redirect_urls = ["https://**"]
+# Restricted from the wildcard ["https://**"] to the app's real deep-link +
+# local dev URLs so arbitrary https hosts cannot be used as auth redirect targets.
+additional_redirect_urls = ["mafia://auth/callback", "exp://", "http://localhost:8081"]
 jwt_expiry = 3600
 enable_signup = true
 

@@ -236,7 +236,6 @@ export default function LoginScreen({
   const [googleLoading, setGoogleLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState('');
-  const [noAccountFound, setNoAccountFound] = useState(false);
 
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
@@ -262,7 +261,6 @@ export default function LoginScreen({
     requestInFlight.current = true;
     setBusy(true);
     setFormError('');
-    setNoAccountFound(false);
     try {
       await task();
     } finally {
@@ -275,7 +273,6 @@ export default function LoginScreen({
     setEmail(text);
     setFieldErrors((prev) => (prev.email ? { ...prev, email: undefined } : prev));
     setFormError((prev) => (prev ? '' : prev));
-    setNoAccountFound(false);
   }, []);
 
   const handlePasswordChange = useCallback((text: string) => {
@@ -324,18 +321,35 @@ export default function LoginScreen({
       try {
         let loginEmail = trimmedInput;
 
-        // If user typed a username without @, find their email from profiles
+        // If the user typed a username (no @), resolve it to an email. The profiles.email
+        // column is no longer client-readable, so we go through get_email_for_username, a
+        // security-definer RPC that returns the account's email or null. It isn't in the
+        // generated Database types yet, so we reach it through a thin, localized cast.
         if (!trimmedInput.includes('@')) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id, email, username')
-            .ilike('username', trimmedInput)
-            .maybeSingle();
+          const rpc = supabase.rpc as unknown as (
+            fn: string,
+            args: Record<string, unknown>
+          ) => Promise<{ data: string | null; error: { message?: string } | null }>;
+          const { data: resolvedEmail, error: lookupError } = await rpc(
+            'get_email_for_username',
+            { p_username: trimmedInput }
+          );
 
-          const typedProfile = profile as { id: string; email?: string | null; username?: string } | null;
-          if (typedProfile?.email) {
-            loginEmail = typedProfile.email;
+          if (lookupError) {
+            setFormError(
+              getFriendlyAuthError(lookupError, "We couldn't log you in. Please try again.")
+            );
+            return;
           }
+
+          if (!resolvedEmail) {
+            setFormError(
+              "We couldn't find an account with that username. Check it and try again, or sign up."
+            );
+            return;
+          }
+
+          loginEmail = resolvedEmail;
         }
 
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -368,7 +382,7 @@ export default function LoginScreen({
           contentContainerStyle={scrollContentStyle}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
+          keyboardDismissMode="on-drag"
         >
           <TitleBlock layout={layout} />
 
@@ -389,7 +403,7 @@ export default function LoginScreen({
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="email"
+                autoComplete="username"
                 textContentType="username"
                 returnKeyType="next"
                 submitBehavior="submit"
@@ -416,24 +430,6 @@ export default function LoginScreen({
                 onSubmitEditing={handleLogin}
                 editable={!busy}
               />
-
-              {/* No account with Google alert */}
-              {noAccountFound ? (
-                <View style={styles.noAccountBox}>
-                  <Text style={styles.noAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
-                    No account with this Google profile yet.
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.noAccountButton}
-                    onPress={onNavigateToSignUp}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.noAccountButtonText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
-                      GO TO SIGN UP
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
 
               {/* Server / auth error */}
               {formError ? (
@@ -480,6 +476,7 @@ export default function LoginScreen({
               disabled={busy}
               activeOpacity={0.7}
               style={styles.forgotTouch}
+              accessibilityRole="button"
             >
               <Text style={styles.forgotText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                 Forgot Password?
@@ -490,7 +487,12 @@ export default function LoginScreen({
               <Text style={styles.needAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                 Need an account?
               </Text>
-              <TouchableOpacity onPress={onNavigateToSignUp} disabled={busy} activeOpacity={0.7}>
+              <TouchableOpacity
+                onPress={onNavigateToSignUp}
+                disabled={busy}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
                 <Text style={styles.signUpText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                   SIGN UP
                 </Text>
@@ -593,37 +595,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     marginBottom: 10,
-  },
-  noAccountBox: {
-    backgroundColor: 'rgba(153, 27, 27, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(248, 113, 113, 0.45)',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  noAccountText: {
-    color: '#fecaca',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  noAccountButton: {
-    marginTop: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#fde68a',
-  },
-  noAccountButtonText: {
-    color: '#fde68a',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1.5,
   },
   buttonDisabled: {
     opacity: 0.6,

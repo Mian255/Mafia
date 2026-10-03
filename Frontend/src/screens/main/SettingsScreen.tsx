@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -17,8 +17,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { deleteAccount } from '../../lib/auth';
+import { validateNewPassword, getFriendlyAuthError, MIN_PASSWORD_LENGTH } from '../../lib/authHelpers';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 
 interface SettingsScreenProps {
@@ -35,6 +38,37 @@ const AVAILABLE_AVATARS: { id: RoleId; image: any }[] = [
   { id: 'mafia', image: CHARACTER_IMAGES.mafia },
 ];
 
+// Single JSON blob for local-only user preferences (audio / haptics).
+const PREFS_STORAGE_KEY = 'settings:prefs';
+
+/**
+ * Detects an anonymous/guest session using reliable signals from the Supabase user object,
+ * falling back to a narrow alias heuristic only when no reliable signal exists.
+ */
+function detectGuest(user: User, aliasHint?: string): boolean {
+  if (typeof user.is_anonymous === 'boolean') return user.is_anonymous;
+  if (user.app_metadata?.provider === 'anonymous') return true;
+  // A registered email is a strong signal that this is a real (non-anonymous) account.
+  if (user.email && user.email.trim().length > 0) return false;
+  // No reliable signal: fall back to a narrowed alias heuristic.
+  const alias = (aliasHint || '').trim().toLowerCase();
+  return alias === 'guest' || alias.startsWith('guest_');
+}
+
+/** Escapes SQL LIKE/ILIKE wildcards so a value is matched literally (case-insensitive exact match). */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+/** True when a Postgres/PostgREST error is a unique-constraint violation. */
+function isUniqueViolation(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return (
+    error.code === '23505' ||
+    /duplicate key|already exists|unique constraint/i.test(error.message || '')
+  );
+}
+
 export default function SettingsScreen({
   userAlias,
   onLogout,
@@ -42,8 +76,12 @@ export default function SettingsScreen({
 }: SettingsScreenProps) {
   const insets = useSafeAreaInsets();
 
-  // Determine if this is a guest based on alias prop
-  const isGuestAlias = Boolean(userAlias && userAlias.toLowerCase().startsWith('guest'));
+  // Narrow initial guess (real user object resolves this once loaded).
+  const initialGuestGuess = Boolean(
+    userAlias &&
+      (userAlias.trim().toLowerCase() === 'guest' ||
+        userAlias.trim().toLowerCase().startsWith('guest_'))
+  );
 
   // User State
   const [userId, setUserId] = useState<string | null>(null);
@@ -51,9 +89,14 @@ export default function SettingsScreen({
   const [username, setUsername] = useState<string>(userAlias || '');
   const [originalUsername, setOriginalUsername] = useState<string>(userAlias || '');
   const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null);
-  const [isGuest, setIsGuest] = useState(isGuestAlias);
+  const [isGuest, setIsGuest] = useState(initialGuestGuess);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Refs: mount guard, in-progress username edit guard, toast timer.
+  const mountedRef = useRef(true);
+  const isUsernameDirtyRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Modal State
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
@@ -69,8 +112,13 @@ export default function SettingsScreen({
 
   // Password Change UI
   const [showPasswordSection, setShowPasswordSection] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Delete Account confirmation gate
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Status Banners
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(
@@ -82,124 +130,141 @@ export default function SettingsScreen({
   const [hapticFeedback, setHapticFeedback] = useState(true);
   const [soundEffects, setSoundEffects] = useState(true);
 
-  // Synchronize User & Profile Data
+  // Shared profile/session fetch used by both the initial load and pull-to-refresh.
+  const fetchProfile = useCallback(async () => {
+    try {
+      const {
+        data: { user },
+        error: authErr,
+      } = await supabase.auth.getUser();
+
+      if (authErr || !user) {
+        if (mountedRef.current) {
+          setIsGuest(true);
+          setUsername((prev) => prev || userAlias || 'Guest');
+        }
+        return;
+      }
+
+      const guest = detectGuest(user, userAlias);
+
+      if (!mountedRef.current) return;
+      setUserId(user.id);
+      setEmail(user.email || '');
+      setIsGuest(guest);
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('username, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (!mountedRef.current) return;
+      const typed = profileData as { username: string; avatar_url: string | null } | null;
+      const fetchedUsername = typed?.username || user.email?.split('@')[0] || 'Player';
+      // Never clobber a username the user is actively editing.
+      if (!isUsernameDirtyRef.current) {
+        setUsername(fetchedUsername);
+        setOriginalUsername(fetchedUsername);
+      }
+      setSelectedAvatar(typed?.avatar_url ?? null);
+    } catch (err) {
+      console.error('Error loading settings:', err);
+    }
+  }, [userAlias]);
+
+  // Initial load of user & profile data.
   useEffect(() => {
-    let isMounted = true;
+    mountedRef.current = true;
+    // Intentional: show the spinner before the async profile load kicks off.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsLoading(true);
+    fetchProfile().finally(() => {
+      if (mountedRef.current) setIsLoading(false);
+    });
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [fetchProfile]);
 
-    const fetchInitialData = async () => {
+  // Load persisted preferences once on mount.
+  useEffect(() => {
+    let active = true;
+    (async () => {
       try {
-        const {
-          data: { user },
-          error: authErr,
-        } = await supabase.auth.getUser();
-
-        if (authErr || !user || !isMounted) {
-          if (isMounted) {
-            setIsGuest(true);
-            setUsername((prev) => prev || userAlias || 'Guest');
-            setIsLoading(false);
-          }
-          return;
-        }
-
-        const isAnonymous =
-          user.is_anonymous === true ||
-          !user.email ||
-          user.app_metadata?.provider === 'anonymous' ||
-          (user.email && user.email.includes('anonymous')) ||
-          Boolean(userAlias && userAlias.toLowerCase().startsWith('guest')) ||
-          Boolean(user.user_metadata?.username && String(user.user_metadata.username).toLowerCase().startsWith('guest'));
-
-        if (isMounted) {
-          setUserId(user.id);
-          setEmail(user.email || '');
-          setIsGuest(Boolean(isAnonymous));
-        }
-
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('username, avatar_url')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (isMounted) {
-          if (profileData) {
-            const typed = profileData as { username: string; avatar_url: string | null };
-            const fetchedUsername = typed.username || user.email?.split('@')[0] || 'Player';
-            setUsername(fetchedUsername);
-            setOriginalUsername(fetchedUsername);
-            setSelectedAvatar(typed.avatar_url || null);
-          } else {
-            const defaultName = user.email?.split('@')[0] || 'Player';
-            setUsername(defaultName);
-            setOriginalUsername(defaultName);
-            setSelectedAvatar(null);
-          }
+        const raw = await AsyncStorage.getItem(PREFS_STORAGE_KEY);
+        if (raw && active) {
+          const parsed = JSON.parse(raw) as Partial<{
+            ambientSound: boolean;
+            soundEffects: boolean;
+            hapticFeedback: boolean;
+          }>;
+          if (typeof parsed.ambientSound === 'boolean') setAmbientSound(parsed.ambientSound);
+          if (typeof parsed.soundEffects === 'boolean') setSoundEffects(parsed.soundEffects);
+          if (typeof parsed.hapticFeedback === 'boolean') setHapticFeedback(parsed.hapticFeedback);
         }
       } catch (err) {
-        console.error('Error loading settings:', err);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-          setRefreshing(false);
-        }
+        console.warn('Failed to load preferences:', err);
       }
-    };
-
-    fetchInitialData();
-
+    })();
     return () => {
-      isMounted = false;
+      active = false;
     };
-  }, [userAlias]);
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        const isAnonymous =
-          user.is_anonymous === true ||
-          !user.email ||
-          user.app_metadata?.provider === 'anonymous' ||
-          (user.email && user.email.includes('anonymous')) ||
-          Boolean(userAlias && userAlias.toLowerCase().startsWith('guest')) ||
-          Boolean(user.user_metadata?.username && String(user.user_metadata.username).toLowerCase().startsWith('guest'));
-        setUserId(user.id);
-        setEmail(user.email || '');
-        setIsGuest(Boolean(isAnonymous));
-
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('username, avatar_url')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (profileData) {
-          const typed = profileData as { username: string; avatar_url: string | null };
-          const fetchedUsername = typed.username || user.email?.split('@')[0] || 'Player';
-          setUsername(fetchedUsername);
-          setOriginalUsername(fetchedUsername);
-          setSelectedAvatar(typed.avatar_url || null);
-        }
-      } else {
-        setIsGuest(true);
-      }
-    } catch (err) {
-      console.error('Error refreshing settings:', err);
+      await fetchProfile();
     } finally {
       setRefreshing(false);
     }
-  }, [userAlias]);
+  }, [fetchProfile]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setStatusMessage({ text, type });
-    setTimeout(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
       setStatusMessage(null);
+      toastTimerRef.current = null;
     }, 4000);
+  };
+
+  // Clear any pending toast timer on unmount.
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    []
+  );
+
+  const persistPrefs = useCallback(
+    (next: { ambientSound: boolean; soundEffects: boolean; hapticFeedback: boolean }) => {
+      AsyncStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(next)).catch((err) =>
+        console.warn('Failed to save preferences:', err)
+      );
+    },
+    []
+  );
+
+  const handleToggleAmbientSound = (value: boolean) => {
+    setAmbientSound(value);
+    persistPrefs({ ambientSound: value, soundEffects, hapticFeedback });
+  };
+  const handleToggleSoundEffects = (value: boolean) => {
+    setSoundEffects(value);
+    persistPrefs({ ambientSound, soundEffects: value, hapticFeedback });
+  };
+  const handleToggleHaptics = (value: boolean) => {
+    setHapticFeedback(value);
+    persistPrefs({ ambientSound, soundEffects, hapticFeedback: value });
+  };
+
+  const closeDeleteModal = () => {
+    if (isDeletingAccount) return;
+    setIsDeleteAccountModalOpen(false);
+    setDeleteConfirmText('');
+    setDeleteError(null);
   };
 
   // Avatar Update Handler
@@ -268,15 +333,19 @@ export default function SettingsScreen({
 
     setIsSavingAlias(true);
     try {
-      // Check if username is already taken by another user (case-insensitive)
-      const { data: existingUser } = await supabase
+      // Friendly pre-check: exact (case-insensitive) match. Wildcards are escaped so a username
+      // containing "_" isn't treated as a LIKE single-char wildcard (spurious "taken").
+      const { data: existingUser, error: lookupError } = await supabase
         .from('profiles')
         .select('id')
-        .ilike('username', trimmed)
+        .ilike('username', escapeLikePattern(trimmed))
         .neq('id', userId)
         .maybeSingle();
 
-      if (existingUser) {
+      if (lookupError) {
+        // Non-fatal: fall through and let the DB unique constraint be authoritative on save.
+        console.warn('Username availability check failed:', lookupError.message);
+      } else if (existingUser) {
         showToast('This username is already taken. Please choose another.', 'error');
         setIsSavingAlias(false);
         return;
@@ -292,7 +361,12 @@ export default function SettingsScreen({
         .eq('id', userId);
 
       if (profileError) {
-        showToast(profileError.message, 'error');
+        // The DB unique constraint is authoritative: map a violation to a "taken" message.
+        if (isUniqueViolation(profileError)) {
+          showToast('This username is already taken. Please choose another.', 'error');
+        } else {
+          showToast(profileError.message, 'error');
+        }
         return;
       }
 
@@ -301,6 +375,7 @@ export default function SettingsScreen({
       });
 
       setOriginalUsername(trimmed);
+      isUsernameDirtyRef.current = false;
       showToast(`Username updated to "${trimmed}"`);
       if (onProfileUpdated) onProfileUpdated();
     } catch (err: unknown) {
@@ -336,24 +411,45 @@ export default function SettingsScreen({
 
   // Direct In-App Password Update
   const handleUpdatePassword = async () => {
-    if (!newPassword || newPassword.length < 6) {
-      showToast('Password must be at least 6 characters', 'error');
+    if (!currentPassword) {
+      showToast('Please enter your current password', 'error');
+      return;
+    }
+    const pwError = validateNewPassword(newPassword);
+    if (pwError) {
+      showToast(pwError, 'error');
       return;
     }
     if (newPassword !== confirmPassword) {
       showToast('Passwords do not match', 'error');
       return;
     }
+    if (!email) {
+      showToast('No registered email found', 'error');
+      return;
+    }
 
     setIsUpdatingPassword(true);
     try {
+      // Re-authenticate with the current password before allowing the change.
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+      if (reauthError) {
+        showToast('Current password is incorrect', 'error');
+        setIsUpdatingPassword(false);
+        return;
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
       if (error) {
-        showToast(error.message, 'error');
+        showToast(getFriendlyAuthError(error, error.message), 'error');
       } else {
+        setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setShowPasswordSection(false);
@@ -472,7 +568,10 @@ export default function SettingsScreen({
                         <TextInput
                           style={styles.textInput}
                           value={username}
-                          onChangeText={setUsername}
+                          onChangeText={(text) => {
+                            isUsernameDirtyRef.current = true;
+                            setUsername(text);
+                          }}
                           placeholder="Enter username..."
                           placeholderTextColor="#475569"
                           maxLength={20}
@@ -538,12 +637,25 @@ export default function SettingsScreen({
                     {showPasswordSection && (
                       <View style={styles.passwordExpandableForm}>
                         <View style={styles.inputBlock}>
+                          <Text style={styles.inputLabel}>CURRENT PASSWORD</Text>
+                          <TextInput
+                            style={styles.textInputFull}
+                            value={currentPassword}
+                            onChangeText={setCurrentPassword}
+                            placeholder="Enter current password..."
+                            placeholderTextColor="#475569"
+                            secureTextEntry
+                            autoCapitalize="none"
+                          />
+                        </View>
+
+                        <View style={[styles.inputBlock, { marginTop: 10 }]}>
                           <Text style={styles.inputLabel}>NEW PASSWORD</Text>
                           <TextInput
                             style={styles.textInputFull}
                             value={newPassword}
                             onChangeText={setNewPassword}
-                            placeholder="At least 6 characters..."
+                            placeholder={`At least ${MIN_PASSWORD_LENGTH} characters...`}
                             placeholderTextColor="#475569"
                             secureTextEntry
                             autoCapitalize="none"
@@ -566,10 +678,18 @@ export default function SettingsScreen({
                         <TouchableOpacity
                           style={[
                             styles.updatePasswordBtn,
-                            (!newPassword || newPassword.length < 6) && styles.btnDisabled,
+                            (!currentPassword ||
+                              !newPassword ||
+                              newPassword.length < MIN_PASSWORD_LENGTH) &&
+                              styles.btnDisabled,
                           ]}
                           onPress={handleUpdatePassword}
-                          disabled={isUpdatingPassword || !newPassword || newPassword.length < 6}
+                          disabled={
+                            isUpdatingPassword ||
+                            !currentPassword ||
+                            !newPassword ||
+                            newPassword.length < MIN_PASSWORD_LENGTH
+                          }
                           activeOpacity={0.85}
                         >
                           {isUpdatingPassword ? (
@@ -621,7 +741,7 @@ export default function SettingsScreen({
                   </View>
                   <Switch
                     value={ambientSound}
-                    onValueChange={setAmbientSound}
+                    onValueChange={handleToggleAmbientSound}
                     trackColor={{ false: '#334155', true: '#e11d48' }}
                     thumbColor="#ffffff"
                   />
@@ -636,7 +756,7 @@ export default function SettingsScreen({
                   </View>
                   <Switch
                     value={soundEffects}
-                    onValueChange={setSoundEffects}
+                    onValueChange={handleToggleSoundEffects}
                     trackColor={{ false: '#334155', true: '#e11d48' }}
                     thumbColor="#ffffff"
                   />
@@ -651,7 +771,7 @@ export default function SettingsScreen({
                   </View>
                   <Switch
                     value={hapticFeedback}
-                    onValueChange={setHapticFeedback}
+                    onValueChange={handleToggleHaptics}
                     trackColor={{ false: '#334155', true: '#e11d48' }}
                     thumbColor="#ffffff"
                   />
@@ -690,7 +810,11 @@ export default function SettingsScreen({
                 <TouchableOpacity
                   style={styles.deleteAccountBtn}
                   activeOpacity={0.8}
-                  onPress={() => setIsDeleteAccountModalOpen(true)}
+                  onPress={() => {
+                    setDeleteConfirmText('');
+                    setDeleteError(null);
+                    setIsDeleteAccountModalOpen(true);
+                  }}
                   disabled={isDeletingAccount}
                 >
                   {isDeletingAccount ? (
@@ -851,9 +975,9 @@ export default function SettingsScreen({
         visible={isDeleteAccountModalOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => !isDeletingAccount && setIsDeleteAccountModalOpen(false)}
+        onRequestClose={closeDeleteModal}
       >
-        <TouchableWithoutFeedback onPress={() => !isDeletingAccount && setIsDeleteAccountModalOpen(false)}>
+        <TouchableWithoutFeedback onPress={closeDeleteModal}>
           <View style={styles.modalBackdrop}>
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
               <View style={[styles.actionModalCard, styles.deleteModalCard]}>
@@ -871,30 +995,72 @@ export default function SettingsScreen({
                   </Text>
                 </View>
 
+                {/* Typed confirmation gate */}
+                <View style={{ width: '100%', marginBottom: 16 }}>
+                  <Text style={[styles.inputLabel, { color: '#fca5a5', marginBottom: 6 }]}>
+                    TYPE &quot;DELETE&quot; TO CONFIRM
+                  </Text>
+                  <TextInput
+                    style={styles.textInputFull}
+                    value={deleteConfirmText}
+                    onChangeText={setDeleteConfirmText}
+                    placeholder="DELETE"
+                    placeholderTextColor="#475569"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!isDeletingAccount}
+                  />
+                </View>
+
+                {deleteError && (
+                  <Text
+                    style={{
+                      color: '#fca5a5',
+                      fontSize: 11,
+                      fontWeight: '700',
+                      textAlign: 'center',
+                      marginBottom: 12,
+                    }}
+                  >
+                    {deleteError}
+                  </Text>
+                )}
+
                 <View style={styles.actionModalBtnRow}>
                   <TouchableOpacity
                     style={styles.actionModalCancelBtn}
                     activeOpacity={0.8}
                     disabled={isDeletingAccount}
-                    onPress={() => setIsDeleteAccountModalOpen(false)}
+                    onPress={closeDeleteModal}
                   >
                     <Text style={styles.actionModalCancelBtnText}>CANCEL</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.actionModalConfirmBtn, styles.deleteConfirmBtn]}
+                    style={[
+                      styles.actionModalConfirmBtn,
+                      styles.deleteConfirmBtn,
+                      (isDeletingAccount ||
+                        deleteConfirmText.trim().toUpperCase() !== 'DELETE') &&
+                        styles.btnDisabled,
+                    ]}
                     activeOpacity={0.85}
-                    disabled={isDeletingAccount}
+                    disabled={
+                      isDeletingAccount || deleteConfirmText.trim().toUpperCase() !== 'DELETE'
+                    }
                     onPress={async () => {
+                      setDeleteError(null);
                       setIsDeletingAccount(true);
                       try {
                         await deleteAccount();
+                        // Only navigate away / log out on CONFIRMED success.
                         setIsDeleteAccountModalOpen(false);
+                        setDeleteConfirmText('');
                         if (onLogout) onLogout();
                       } catch (err) {
                         console.error('Error deleting account:', err);
-                        setIsDeleteAccountModalOpen(false);
-                        if (onLogout) onLogout();
+                        // Failure: keep the user logged in and show a clear error.
+                        setDeleteError('Account deletion failed, please try again.');
                       } finally {
                         setIsDeletingAccount(false);
                       }

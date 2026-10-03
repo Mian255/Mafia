@@ -22,7 +22,7 @@ import {
   validateEmail,
   validateNewPassword,
 } from '../../lib/authHelpers';
-import { validateUsername } from '../../lib/profile';
+import { saveUsername, validateUsername } from '../../lib/profile';
 import { AuthTextInput } from '../../components/auth/AuthTextInput';
 import { GoogleSignInButton } from '../../components/auth/GoogleSignInButton';
 import { useStableCallback } from '../../hooks/useStableCallback';
@@ -166,7 +166,9 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     setIsLoading(true);
 
     try {
-      // 1. Check if username is already taken in Supabase
+      // 1. UX pre-check only: warn early if the codename already looks taken. This races with
+      //    other sign-ups, so it is best-effort — the profiles.username UNIQUE constraint
+      //    (enforced inside the handle_new_user trigger during sign-up) is authoritative.
       const { data: existingUser } = await supabase
         .from('profiles')
         .select('id')
@@ -175,12 +177,11 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
 
       if (existingUser) {
         setFieldErrors({ username: 'This username is already taken. Choose another.' });
-        setIsLoading(false);
-        requestInFlight.current = false;
         return;
       }
 
-      // 2. Sign up with Supabase Auth
+      // 2. Sign up with Supabase Auth. The username travels in user metadata so the
+      //    handle_new_user trigger can create the profile row (and enforce uniqueness).
       const { data, error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
@@ -192,37 +193,39 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
       });
 
       if (error) {
-        setErrorMessage(
-          getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
-        );
+        // A duplicate username fails inside the trigger as a generic "Database error saving
+        // new user"; email collisions come back through dedicated auth error codes instead,
+        // so treat this specific failure as an authoritative "username taken".
+        if (/database error saving new user/i.test(error.message ?? '')) {
+          setFieldErrors({ username: 'This username is already taken. Choose another.' });
+        } else {
+          setErrorMessage(
+            getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
+          );
+        }
       } else if (data.session?.user) {
-        // Save profile record in Supabase profiles table
+        // Auto-confirmed and signed in: reconcile the profile (email + username) and sync the
+        // auth metadata. saveUsername reports a unique-username collision as 'taken' and
+        // surfaces real failures instead of swallowing them.
+        const authedUser = data.session.user;
         try {
-          await supabase.from('profiles').upsert({
-            id: data.session.user.id,
-            email: trimmedEmail,
-            username: trimmedUsername,
-            updated_at: new Date().toISOString(),
-          } as never);
-        } catch {
-          // ignore
+          const result = await saveUsername(authedUser, trimmedUsername);
+          if (result === 'taken') {
+            setFieldErrors({ username: 'This username is already taken. Choose another.' });
+            return;
+          }
+        } catch (profileErr) {
+          console.error('Sign-up succeeded but saving the profile failed:', profileErr);
+          setErrorMessage(
+            "Your account is ready, but we couldn't save your codename. You can set it later."
+          );
         }
 
-        await onSignUpSuccess?.(data.session.user);
-      } else if (data.user && data.user.identities?.length === 0) {
-        setErrorMessage('An account with this email already exists. Try logging in instead.');
+        await onSignUpSuccess?.(authedUser);
       } else if (data.user) {
-        // Record profile entry
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            email: trimmedEmail,
-            username: trimmedUsername,
-            updated_at: new Date().toISOString(),
-          } as never);
-        } catch {
-          // ignore
-        }
+        // Email confirmation required (no session yet). The handle_new_user trigger has
+        // already created the profile with this username server-side; a client upsert can't
+        // run without a session, so we rely on the trigger rather than swallowing an error.
         setConfirmationSentTo(trimmedEmail);
       }
     } catch (err: unknown) {

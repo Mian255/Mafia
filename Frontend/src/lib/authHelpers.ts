@@ -1,7 +1,10 @@
 import { isAuthError, isAuthRetryableFetchError, type User } from '@supabase/supabase-js';
 
-/** Must match the Supabase Auth "Minimum password length" setting (Supabase default: 6). */
-export const MIN_PASSWORD_LENGTH = 6;
+/**
+ * Minimum password length enforced client-side. Kept >= the Supabase Auth "Minimum password
+ * length" setting so the server never rejects a password the UI accepted.
+ */
+export const MIN_PASSWORD_LENGTH = 8;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -12,11 +15,14 @@ export function validateEmail(email: string): string | null {
   return null;
 }
 
-/** Returns an error message for a new password, or null if it meets the minimum length. */
+/** Returns an error message for a new password, or null if it meets the policy. */
 export function validateNewPassword(password: string): string | null {
   if (!password) return 'Please enter a password.';
   if (password.length < MIN_PASSWORD_LENGTH) {
     return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+  }
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    return 'Password must include at least one letter and one number.';
   }
   return null;
 }
@@ -143,5 +149,8 @@ export function getFriendlyAuthError(
     }
   }
 
-  return rawMessage && rawMessage.length < 120 ? rawMessage : fallback;
+  // Unmapped errors: never surface raw internal / Postgres text to the user — the mapped-code
+  // branches above cover everything we translate, so anything reaching here gets the generic
+  // fallback. (Network errors are already handled at the top.)
+  return fallback;
 }

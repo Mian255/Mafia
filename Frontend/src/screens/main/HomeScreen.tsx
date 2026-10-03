@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  type ImageSourcePropType,
   Modal,
   RefreshControl,
   ScrollView,
@@ -25,6 +26,7 @@ import {
 } from "../../components/RoleCard";
 import FriendsScreen from "./FriendsScreen";
 import SettingsScreen from "./SettingsScreen";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 interface HomeScreenProps {
   userAlias?: string;
@@ -45,6 +47,27 @@ interface UserStats {
 interface UserProfile {
   username: string;
   avatar_url: string | null;
+}
+
+type AvatarSource =
+  | { type: "uri"; uri: string }
+  | { type: "local"; source: ImageSourcePropType }
+  | null;
+
+/**
+ * Fix 5: `avatar_url` can be a real uploaded URL, a RoleId used as a local character
+ * image key, or empty/unknown. Map it to a renderable image source, or null to fall
+ * back to the initial letter. Keeps the existing role-avatar behavior working.
+ */
+function resolveAvatarSource(avatarUrl: string | null | undefined): AvatarSource {
+  if (!avatarUrl) return null;
+  if (avatarUrl.startsWith("http")) {
+    return { type: "uri", uri: avatarUrl };
+  }
+  if (avatarUrl in CHARACTER_IMAGES) {
+    return { type: "local", source: CHARACTER_IMAGES[avatarUrl as RoleId] };
+  }
+  return null;
 }
 
 export default function HomeScreen({
@@ -70,6 +93,49 @@ export default function HomeScreen({
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Fix 3: error state, kept distinct from the loading spinner and from the empty
+  // (new-user zero) state so each can render its own affordance.
+  const [error, setError] = useState(false);
+  // Bumping this re-runs the load effect (used by the retry affordance below), which
+  // also tears down and re-establishes the realtime subscriptions.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // Fix 4: single source of truth for the profile+stats fetch/mapping, shared by the
+  // initial load effect and pull-to-refresh so the two can never drift apart.
+  const fetchUserData = useCallback(async (userId: string) => {
+    const [{ data: profileData }, { data: statsData }] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("username, avatar_url")
+        .eq("id", userId)
+        .maybeSingle(),
+      supabase
+        .from("user_stats")
+        .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
+        .eq("user_id", userId)
+        .maybeSingle(),
+    ]);
+
+    const mappedProfile: UserProfile | null = profileData
+      ? {
+          username: (profileData as UserProfile).username,
+          avatar_url: (profileData as UserProfile).avatar_url,
+        }
+      : null;
+
+    const mappedStats: UserStats | null = statsData
+      ? {
+          games_played: (statsData as UserStats).games_played ?? 0,
+          games_won: (statsData as UserStats).games_won ?? 0,
+          mafia_wins: (statsData as UserStats).mafia_wins ?? 0,
+          civilian_wins: (statsData as UserStats).civilian_wins ?? 0,
+          doctor_wins: (statsData as UserStats).doctor_wins ?? 0,
+          detective_wins: (statsData as UserStats).detective_wins ?? 0,
+        }
+      : null;
+
+    return { profile: mappedProfile, stats: mappedStats };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -87,41 +153,19 @@ export default function HomeScreen({
           return;
         }
 
-        // Fetch profile and user stats concurrently
-        const [{ data: profileData }, { data: statsData }] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("username, avatar_url")
-            .eq("id", user.id)
-            .maybeSingle(),
-          supabase
-            .from("user_stats")
-            .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
-            .eq("user_id", user.id)
-            .maybeSingle(),
-        ]);
+        const { profile: mappedProfile, stats: mappedStats } = await fetchUserData(user.id);
 
         if (isMounted) {
-          if (profileData) {
-            const typedProfile = profileData as { username: string; avatar_url: string | null };
-            setProfile({
-              username: typedProfile.username,
-              avatar_url: typedProfile.avatar_url,
-            });
-          }
-
-          if (statsData) {
-            const typedStats = statsData as UserStats;
-            setStats({
-              games_played: typedStats.games_played ?? 0,
-              games_won: typedStats.games_won ?? 0,
-              mafia_wins: typedStats.mafia_wins ?? 0,
-              civilian_wins: typedStats.civilian_wins ?? 0,
-              doctor_wins: typedStats.doctor_wins ?? 0,
-              detective_wins: typedStats.detective_wins ?? 0,
-            });
-          }
+          if (mappedProfile) setProfile(mappedProfile);
+          if (mappedStats) setStats(mappedStats);
+          setError(false);
         }
+
+        // Fix 1: re-check the mounted flag after the awaits above. If the component
+        // unmounted while getUser()/fetchUserData were in flight, cleanup already ran
+        // (with both channel handles still null); bail out here so we never create the
+        // channels post-unmount and leak them.
+        if (!isMounted) return;
 
         // Subscribe to live postgres changes on user_stats
         statsChannel = supabase
@@ -175,6 +219,7 @@ export default function HomeScreen({
           .subscribe();
       } catch (err) {
         console.error("Error loading user data:", err);
+        if (isMounted) setError(true);
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -190,7 +235,7 @@ export default function HomeScreen({
       if (statsChannel) supabase.removeChannel(statsChannel);
       if (profileChannel) supabase.removeChannel(profileChannel);
     };
-  }, []);
+  }, [fetchUserData, reloadKey]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -200,47 +245,21 @@ export default function HomeScreen({
       } = await supabase.auth.getUser();
 
       if (user) {
-        const [{ data: profileData }, { data: statsData }] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("username, avatar_url")
-            .eq("id", user.id)
-            .maybeSingle(),
-          supabase
-            .from("user_stats")
-            .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
-            .eq("user_id", user.id)
-            .maybeSingle(),
-        ]);
-
-        if (profileData) {
-          const typedProfile = profileData as { username: string; avatar_url: string | null };
-          setProfile({
-            username: typedProfile.username,
-            avatar_url: typedProfile.avatar_url,
-          });
-        }
-
-        if (statsData) {
-          const typedStats = statsData as UserStats;
-          setStats({
-            games_played: typedStats.games_played ?? 0,
-            games_won: typedStats.games_won ?? 0,
-            mafia_wins: typedStats.mafia_wins ?? 0,
-            civilian_wins: typedStats.civilian_wins ?? 0,
-            doctor_wins: typedStats.doctor_wins ?? 0,
-            detective_wins: typedStats.detective_wins ?? 0,
-          });
-        }
+        // Fix 4: reuse the shared fetch so refresh and initial load stay in sync.
+        const { profile: mappedProfile, stats: mappedStats } = await fetchUserData(user.id);
+        if (mappedProfile) setProfile(mappedProfile);
+        if (mappedStats) setStats(mappedStats);
       }
+      setError(false);
     } catch (err) {
       console.error("Error refreshing home stats:", err);
+      setError(true);
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [fetchUserData]);
 
-  const handleLogout = async () => {
+  const handleLogout = useStableCallback(async () => {
     try {
       await supabase.auth.signOut();
     } catch {
@@ -249,17 +268,28 @@ export default function HomeScreen({
     if (onLogout) {
       onLogout();
     }
-  };
+  });
 
-  const handleCardSelect = (role: RoleData) => {
+  // Fix 7: stable identity so the memoized RoleCards don't re-render on every state change.
+  const handleCardSelect = useStableCallback((role: RoleData) => {
     setSelectedRole(role);
     setIsDossierOpen(true);
-  };
+  });
+
+  // Fix 3: retry bumps reloadKey to re-run the load effect (re-fetch + re-subscribe)
+  // and shows the loading spinner again while it runs.
+  const handleRetry = useCallback(() => {
+    setError(false);
+    setLoading(true);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   // Derived calculations from backend data
   const displayName = profile?.username || userAlias || "Player";
-  const avatarKey = profile?.avatar_url as RoleId;
-  const hasValidAvatar = avatarKey && CHARACTER_IMAGES[avatarKey];
+  // Fix 5: avatar_url may be a real uploaded URL, a RoleId, or empty/unknown.
+  const avatarSource = resolveAvatarSource(profile?.avatar_url);
+  // Fix 6: one shared fallback initial derived from the display name (header + modal).
+  const fallbackInitial = (displayName || "P").charAt(0).toUpperCase();
   const gamesPlayed = stats.games_played;
   const gamesWon = stats.games_won;
   const winRate = gamesPlayed > 0 ? Math.round((gamesWon / gamesPlayed) * 100) : 0;
@@ -319,23 +349,48 @@ export default function HomeScreen({
                   hitSlop={{ top: 10, bottom: 10, left: 6, right: 10 }}
                   onPress={() => setIsProfileModalOpen(true)}
                 >
-                  {hasValidAvatar ? (
+                  {avatarSource ? (
                     <Image
-                      source={CHARACTER_IMAGES[avatarKey]}
+                      source={
+                        avatarSource.type === "uri"
+                          ? { uri: avatarSource.uri }
+                          : avatarSource.source
+                      }
                       style={styles.headerAvatarImg}
                       resizeMode="cover"
                     />
                   ) : (
-                    <Text style={styles.headerAvatarInitial}>
-                      {(displayName || "P").charAt(0).toUpperCase()}
-                    </Text>
+                    <Text style={styles.headerAvatarInitial}>{fallbackInitial}</Text>
                   )}
                 </TouchableOpacity>
               </View>
             </View>
 
+            {/* Fix 3: error state, distinct from the loading spinner and the empty
+                new-user zero state, with a lightweight retry affordance. */}
+            {error && (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorBannerText}>
+                  Couldn&apos;t load your stats. Check your connection and try again.
+                </Text>
+                <TouchableOpacity
+                  style={styles.errorRetryBtn}
+                  activeOpacity={0.85}
+                  onPress={handleRetry}
+                >
+                  <Text style={styles.errorRetryText}>RETRY</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Quick Play Banner Card */}
-            <TouchableOpacity style={styles.quickPlayCard} activeOpacity={0.9}>
+            {/* Fix 2: no matchmaking backend yet, so route the primary CTA to the same
+                Join By Code flow as onJoinRoom instead of leaving it a silent no-op. */}
+            <TouchableOpacity
+              style={styles.quickPlayCard}
+              activeOpacity={0.9}
+              onPress={onJoinRoom}
+            >
               {/* Left Play Triangle Button */}
               <View style={styles.playIconContainer}>
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
@@ -464,16 +519,18 @@ export default function HomeScreen({
               <View style={styles.profileModalCard}>
                 <View style={styles.profileModalHeader}>
                   <View style={styles.profileAvatarBust}>
-                    {hasValidAvatar ? (
+                    {avatarSource ? (
                       <Image
-                        source={CHARACTER_IMAGES[avatarKey]}
+                        source={
+                          avatarSource.type === "uri"
+                            ? { uri: avatarSource.uri }
+                            : avatarSource.source
+                        }
                         style={styles.modalAvatarImg}
                         resizeMode="cover"
                       />
                     ) : (
-                      <Text style={styles.profileAvatarInitial}>
-                        {(displayName || "O").charAt(0).toUpperCase()}
-                      </Text>
+                      <Text style={styles.profileAvatarInitial}>{fallbackInitial}</Text>
                     )}
                   </View>
                   <View style={{ flex: 1 }}>
@@ -901,5 +958,39 @@ const styles = StyleSheet.create({
     color: "#8e9eb5",
     fontSize: 11,
     fontWeight: "700",
+  },
+
+  /* Error Banner (Fix 3) */
+  errorBanner: {
+    backgroundColor: "#1c1114",
+    borderWidth: 1,
+    borderColor: "#7f1d1d",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  errorBannerText: {
+    flex: 1,
+    color: "#fca5a5",
+    fontSize: 11.5,
+    fontWeight: "600",
+    lineHeight: 16,
+  },
+  errorRetryBtn: {
+    backgroundColor: "#dc2626",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  errorRetryText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
 });

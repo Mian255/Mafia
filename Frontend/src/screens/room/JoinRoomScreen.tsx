@@ -30,46 +30,65 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
   const [publicRooms, setPublicRooms] = useState<PublicRoomItem[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Distinguishes a genuine "no rooms" result from a fetch failure (network/auth).
+  const [roomsError, setRoomsError] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
+  // Tracks whether the component is still mounted so async callbacks don't setState after unmount.
+  const isMountedRef = useRef(true);
+  // Counts consecutive poll failures so the 8s poll backs off instead of spamming errors.
+  const pollFailuresRef = useRef(0);
 
-  const loadPublicRooms = useCallback(async () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const loadPublicRooms = useCallback(async (isPoll = false) => {
+    // Back off the background poll after repeated failures so it doesn't spam
+    // errors every 8s. A manual refresh/retry resets the counter and tries again.
+    if (isPoll && pollFailuresRef.current >= 3) return;
     try {
+      // Handles both the new throw-on-error behaviour and the legacy return shape.
       const rooms = await fetchPublicRooms();
-      setPublicRooms(rooms);
+      if (!isMountedRef.current) return;
+      setPublicRooms(Array.isArray(rooms) ? rooms : []);
+      setRoomsError(false);
+      pollFailuresRef.current = 0;
     } catch {
-      // ignore
+      pollFailuresRef.current += 1;
+      // Only flag the error state; keep any rooms already shown intact. Setting
+      // the same boolean repeatedly is a no-op re-render, so polling won't spam.
+      if (isMountedRef.current) setRoomsError(true);
     } finally {
-      setLoadingRooms(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoadingRooms(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const fetchInitial = async () => {
-      try {
-        const rooms = await fetchPublicRooms();
-        if (isMounted) {
-          setPublicRooms(rooms);
-          setLoadingRooms(false);
-        }
-      } catch {
-        if (isMounted) setLoadingRooms(false);
-      }
-    };
-
-    fetchInitial();
-    const interval = setInterval(loadPublicRooms, 8000);
+    // Intentional: load the public-room list on mount and poll it thereafter.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadPublicRooms();
+    const interval = setInterval(() => loadPublicRooms(true), 8000);
     return () => {
-      isMounted = false;
       clearInterval(interval);
     };
   }, [loadPublicRooms]);
 
   const onRefresh = useCallback(() => {
+    pollFailuresRef.current = 0;
     setRefreshing(true);
+    loadPublicRooms();
+  }, [loadPublicRooms]);
+
+  const handleManualRefresh = useCallback(() => {
+    pollFailuresRef.current = 0;
+    setLoadingRooms(true);
     loadPublicRooms();
   }, [loadPublicRooms]);
 
@@ -189,8 +208,18 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
               style={styles.codeInput}
               value={code}
               onChangeText={(text) => {
-                setCode(text.toUpperCase().replace(/[^A-Z0-9]/g, ''));
-                if (errorMessage) setErrorMessage('');
+                // Match the generator alphabet exactly: uppercase A-Z and digits
+                // 2-9, EXCLUDING the confusable characters 0, O, 1 and I. Anything
+                // else is stripped, uppercased as typed, and capped at 5 chars.
+                const upper = text.toUpperCase();
+                const filtered = upper.replace(/[^A-HJ-NP-Z2-9]/g, '').slice(0, 5);
+                if (filtered !== upper) {
+                  // A disallowed character (0/O/1/I or a symbol) was entered.
+                  setErrorMessage('Only A-Z (no I/O) and 2-9 are allowed. 0, O, 1 and I are not used in room codes.');
+                } else if (errorMessage) {
+                  setErrorMessage('');
+                }
+                setCode(filtered);
               }}
               placeholder="5-DIGIT CODE"
               placeholderTextColor="#475569"
@@ -223,7 +252,7 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
         {/* Public Rooms Header */}
         <View style={styles.publicHeaderRow}>
           <Text style={styles.publicSectionTitle}>PUBLIC ROOMS</Text>
-          <TouchableOpacity onPress={loadPublicRooms} activeOpacity={0.7}>
+          <TouchableOpacity onPress={handleManualRefresh} activeOpacity={0.7}>
             <Text style={styles.refreshText}>REFRESH</Text>
           </TouchableOpacity>
         </View>
@@ -250,12 +279,29 @@ export default function JoinRoomScreen({ onBack, onRoomJoined }: JoinRoomScreenP
               />
             }
             ListEmptyComponent={
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>NO PUBLIC ROOMS</Text>
-                <Text style={styles.emptySub}>
-                  No public rooms are active right now. Enter a room code above or create your own room.
-                </Text>
-              </View>
+              roomsError ? (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.errorTitle}>COULDN&apos;T LOAD ROOMS</Text>
+                  <Text style={styles.emptySub}>
+                    We couldn&apos;t reach the server. Check your connection and try again.
+                    You can still join directly with a room code above.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.retryBtn}
+                    onPress={handleManualRefresh}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.retryBtnText}>RETRY</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyTitle}>NO PUBLIC ROOMS</Text>
+                  <Text style={styles.emptySub}>
+                    No public rooms are active right now. Enter a room code above or create your own room.
+                  </Text>
+                </View>
+              )
             }
           />
         )}
@@ -504,6 +550,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     marginBottom: 6,
+  },
+  errorTitle: {
+    color: '#fb7185',
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: '#e11d48',
+    borderRadius: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  retryBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   emptySub: {
     color: '#475569',

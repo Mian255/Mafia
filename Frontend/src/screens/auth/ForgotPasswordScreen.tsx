@@ -17,7 +17,12 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { StatusBar } from 'expo-status-bar';
 import { makeRedirectUri } from 'expo-auth-session';
 import { supabase } from '../../lib/supabase';
-import { getFriendlyAuthError, validateEmail } from '../../lib/authHelpers';
+import {
+  MIN_PASSWORD_LENGTH,
+  getFriendlyAuthError,
+  validateEmail,
+  validateNewPassword,
+} from '../../lib/authHelpers';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -171,8 +176,9 @@ export default function ForgotPasswordScreen({
   // STEP 3: Set New Password
   const handleUpdatePassword = async () => {
     if (requestInFlight.current) return;
-    if (!newPassword || newPassword.length < 6) {
-      setErrorMessage('Passcode must be at least 6 characters long.');
+    const passwordError = validateNewPassword(newPassword);
+    if (passwordError) {
+      setErrorMessage(passwordError);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -387,7 +393,7 @@ export default function ForgotPasswordScreen({
             {step === 'otp' && (
               <View style={styles.form}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Verification Code (6-10 Digits)</Text>
+                  <Text style={styles.inputLabel}>Verification Code (6 Digits)</Text>
                   <Pressable
                     style={[
                       styles.inputBox,
@@ -398,7 +404,7 @@ export default function ForgotPasswordScreen({
                     <TextInput
                       ref={otpInputRef}
                       style={[styles.input, styles.otpInput]}
-                      placeholder="123456789"
+                      placeholder="123456"
                       placeholderTextColor="#334155"
                       value={otpCode}
                       onChangeText={(t) => {
@@ -408,7 +414,7 @@ export default function ForgotPasswordScreen({
                       onFocus={() => setFocusedInput('otp')}
                       onBlur={() => setFocusedInput(null)}
                       keyboardType="number-pad"
-                      maxLength={12}
+                      maxLength={6}
                       returnKeyType="done"
                       onSubmitEditing={handleVerifyOtp}
                       editable={!isLoading}
@@ -436,6 +442,7 @@ export default function ForgotPasswordScreen({
                   style={styles.resendRow}
                   onPress={() => {
                     if (resendCooldown === 0) {
+                      setOtpCode('');
                       handleSendRecovery();
                     }
                   }}
@@ -480,7 +487,7 @@ export default function ForgotPasswordScreen({
                     <TextInput
                       ref={newPasswordRef}
                       style={styles.input}
-                      placeholder="Minimum 6 characters"
+                      placeholder={`Minimum ${MIN_PASSWORD_LENGTH} characters`}
                       placeholderTextColor="#475569"
                       value={newPassword}
                       onChangeText={(t) => {
@@ -498,6 +505,8 @@ export default function ForgotPasswordScreen({
                       style={styles.eyeButton}
                       onPress={() => setShowPassword((prev) => !prev)}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
                     >
                       <Text style={styles.eyeText}>{showPassword ? '👁️' : '🔒'}</Text>
                     </TouchableOpacity>
@@ -534,6 +543,8 @@ export default function ForgotPasswordScreen({
                       style={styles.eyeButton}
                       onPress={() => setShowConfirmPassword((prev) => !prev)}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={showConfirmPassword ? 'Hide password' : 'Show password'}
                     >
                       <Text style={styles.eyeText}>{showConfirmPassword ? '👁️' : '🔒'}</Text>
                     </TouchableOpacity>
