@@ -20,6 +20,17 @@ try {
 
 const isWeb = Platform.OS === 'web' || typeof window !== 'undefined';
 
+// Polyfill mediaDevices for React Native / Expo Go where native WebRTC is not linked
+// to prevent livekit-client from throwing "Cannot read property 'getUserMedia' of undefined"
+if (typeof navigator !== 'undefined' && !navigator.mediaDevices) {
+  (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
+    getUserMedia: () => Promise.reject(new Error('WebRTC mic not available in current environment')),
+    enumerateDevices: () => Promise.resolve([]),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+}
+
 export interface VoiceRoomState {
   status: 'idle' | 'connecting' | 'connected' | 'error';
   error: string | null;

@@ -157,8 +157,12 @@ export default function HomeScreen({
 
         await loadUserData();
 
+        const statsName = `user_stats_${user.id}`;
+        const existingStats = supabase.getChannels().find((c) => c.topic === `realtime:${statsName}`);
+        if (existingStats) supabase.removeChannel(existingStats);
+
         statsChannel = supabase
-          .channel(`user_stats_${user.id}`)
+          .channel(statsName)
           .on(
             "postgres_changes",
             {
@@ -183,8 +187,12 @@ export default function HomeScreen({
           )
           .subscribe();
 
+        const profileName = `user_profile_${user.id}`;
+        const existingProfile = supabase.getChannels().find((c) => c.topic === `realtime:${profileName}`);
+        if (existingProfile) supabase.removeChannel(existingProfile);
+
         profileChannel = supabase
-          .channel(`user_profile_${user.id}`)
+          .channel(profileName)
           .on(
             "postgres_changes",
             {
