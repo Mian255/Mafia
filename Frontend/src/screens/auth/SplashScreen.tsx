@@ -65,6 +65,16 @@ export default function SplashScreen({ onFinish, durationMs = 3000 }: SplashScre
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
+        // Cap the bar at 90% so it never signals "done" before the app is actually ready.
+        // The real screen transition is gated in App.tsx (destination resolution); this
+        // splash only fades out and fires onFinish as an advisory signal, so it must not
+        // imply completion by filling to 100%.
+        Animated.timing(progressAnim, {
+          toValue: 0.9,
+          duration: durationMs - 800,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: false,
+        }),
       ]),
     ]);
     entrance.start();

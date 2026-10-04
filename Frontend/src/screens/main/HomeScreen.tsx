@@ -1,18 +1,17 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
+  BackHandler,
   Image,
   Modal,
-  RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import Svg, { Circle, Path, Rect } from "react-native-svg";
+import Svg, { Path } from "react-native-svg";
 import { supabase } from "../../lib/supabase";
 import { BottomNavBar, NavTab } from "../../components/BottomNavBar";
 import {
@@ -23,12 +22,16 @@ import {
   RoleData,
   RoleId,
 } from "../../components/RoleCard";
+import { SnapchatPullRefreshScreen } from "../../components/refresh";
 import FriendsScreen from "./FriendsScreen";
 import SettingsScreen from "./SettingsScreen";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 interface HomeScreenProps {
   userAlias?: string;
   onLogout?: () => void;
+  onCreateRoom?: () => void;
+  onJoinRoom?: () => void;
 }
 
 interface UserStats {
@@ -45,11 +48,42 @@ interface UserProfile {
   avatar_url: string | null;
 }
 
-export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScreenProps) {
+export default function HomeScreen({
+  userAlias = "Player",
+  onLogout,
+  onCreateRoom,
+  onJoinRoom,
+}: HomeScreenProps) {
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<NavTab>("play");
   const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  // Handle Android hardware/gesture back button inside HomeScreen
+  useEffect(() => {
+    const handleBackPress = () => {
+      if (isDossierOpen) {
+        setIsDossierOpen(false);
+        return true;
+      }
+      if (isProfileModalOpen) {
+        setIsProfileModalOpen(false);
+        return true;
+      }
+      if (activeTab !== "play") {
+        setActiveTab("play");
+        return true;
+      }
+      return false; // delegate to root App handler
+    };
+
+    const backSubscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      handleBackPress
+    );
+    return () => backSubscription.remove();
+  }, [isDossierOpen, isProfileModalOpen, activeTab]);
 
   // Dynamic Backend State
   const [stats, setStats] = useState<UserStats>({
@@ -61,64 +95,70 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
     detective_wins: 0,
   });
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  const loadUserData = useCallback(async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const [{ data: profileData }, { data: statsData }] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("username, avatar_url")
+          .eq("id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("user_stats")
+          .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+      ]);
+
+      if (profileData) {
+        const typedProfile = profileData as { username: string; avatar_url: string | null };
+        setProfile({
+          username: typedProfile.username,
+          avatar_url: typedProfile.avatar_url,
+        });
+      }
+
+      if (statsData) {
+        const typedStats = statsData as UserStats;
+        setStats({
+          games_played: typedStats.games_played ?? 0,
+          games_won: typedStats.games_won ?? 0,
+          mafia_wins: typedStats.mafia_wins ?? 0,
+          civilian_wins: typedStats.civilian_wins ?? 0,
+          doctor_wins: typedStats.doctor_wins ?? 0,
+          detective_wins: typedStats.detective_wins ?? 0,
+        });
+      }
+    } catch (err) {
+      console.warn("Error loading user data:", err);
+    }
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
     let statsChannel: ReturnType<typeof supabase.channel> | null = null;
     let profileChannel: ReturnType<typeof supabase.channel> | null = null;
 
-    const loadUserData = async () => {
+    const initUserData = async () => {
       try {
         const {
           data: { user },
         } = await supabase.auth.getUser();
 
-        if (!user || !isMounted) {
-          if (isMounted) setLoading(false);
-          return;
-        }
+        if (!user || !isMounted) return;
 
-        // Fetch profile and user stats concurrently
-        const [{ data: profileData }, { data: statsData }] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("username, avatar_url")
-            .eq("id", user.id)
-            .maybeSingle(),
-          supabase
-            .from("user_stats")
-            .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
-            .eq("user_id", user.id)
-            .maybeSingle(),
-        ]);
+        await loadUserData();
 
-        if (isMounted) {
-          if (profileData) {
-            const typedProfile = profileData as { username: string; avatar_url: string | null };
-            setProfile({
-              username: typedProfile.username,
-              avatar_url: typedProfile.avatar_url,
-            });
-          }
-
-          if (statsData) {
-            const typedStats = statsData as UserStats;
-            setStats({
-              games_played: typedStats.games_played ?? 0,
-              games_won: typedStats.games_won ?? 0,
-              mafia_wins: typedStats.mafia_wins ?? 0,
-              civilian_wins: typedStats.civilian_wins ?? 0,
-              doctor_wins: typedStats.doctor_wins ?? 0,
-              detective_wins: typedStats.detective_wins ?? 0,
-            });
-          }
-        }
-
-        // Subscribe to live postgres changes on user_stats
         statsChannel = supabase
-          .channel(`user_stats_live_${user.id}`)
+          .channel(`user_stats_${user.id}`)
           .on(
             "postgres_changes",
             {
@@ -128,25 +168,23 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
               filter: `user_id=eq.${user.id}`,
             },
             (payload) => {
-              if (isMounted && payload.new && typeof payload.new === "object") {
-                const updated = payload.new as Partial<UserStats>;
-                setStats((prev) => ({
-                  ...prev,
-                  games_played: updated.games_played ?? prev.games_played,
-                  games_won: updated.games_won ?? prev.games_won,
-                  mafia_wins: updated.mafia_wins ?? prev.mafia_wins,
-                  civilian_wins: updated.civilian_wins ?? prev.civilian_wins,
-                  doctor_wins: updated.doctor_wins ?? prev.doctor_wins,
-                  detective_wins: updated.detective_wins ?? prev.detective_wins,
-                }));
+              if (isMounted && payload.new) {
+                const newStats = payload.new as UserStats;
+                setStats({
+                  games_played: newStats.games_played ?? 0,
+                  games_won: newStats.games_won ?? 0,
+                  mafia_wins: newStats.mafia_wins ?? 0,
+                  civilian_wins: newStats.civilian_wins ?? 0,
+                  doctor_wins: newStats.doctor_wins ?? 0,
+                  detective_wins: newStats.detective_wins ?? 0,
+                });
               }
             }
           )
           .subscribe();
 
-        // Subscribe to live postgres changes on profiles
         profileChannel = supabase
-          .channel(`profile_live_${user.id}`)
+          .channel(`user_profile_${user.id}`)
           .on(
             "postgres_changes",
             {
@@ -156,276 +194,209 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
               filter: `id=eq.${user.id}`,
             },
             (payload) => {
-              if (isMounted && payload.new && typeof payload.new === "object") {
-                const updated = payload.new as { username?: string; avatar_url?: string | null };
-                setProfile((prev) => ({
-                  username: updated.username ?? (prev?.username || "Player"),
-                  avatar_url: updated.avatar_url ?? (prev?.avatar_url || null),
-                }));
+              if (isMounted && payload.new) {
+                const updated = payload.new as { username: string; avatar_url: string | null };
+                setProfile({
+                  username: updated.username,
+                  avatar_url: updated.avatar_url,
+                });
               }
             }
           )
           .subscribe();
       } catch (err) {
-        console.error("Error loading user data:", err);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-          setRefreshing(false);
-        }
+        console.warn("Error initializing user data:", err);
       }
     };
 
-    loadUserData();
+    initUserData();
 
     return () => {
       isMounted = false;
       if (statsChannel) supabase.removeChannel(statsChannel);
       if (profileChannel) supabase.removeChannel(profileChannel);
     };
-  }, []);
+  }, [loadUserData]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        const [{ data: profileData }, { data: statsData }] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("username, avatar_url")
-            .eq("id", user.id)
-            .maybeSingle(),
-          supabase
-            .from("user_stats")
-            .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
-            .eq("user_id", user.id)
-            .maybeSingle(),
-        ]);
-
-        if (profileData) {
-          const typedProfile = profileData as { username: string; avatar_url: string | null };
-          setProfile({
-            username: typedProfile.username,
-            avatar_url: typedProfile.avatar_url,
-          });
-        }
-
-        if (statsData) {
-          const typedStats = statsData as UserStats;
-          setStats({
-            games_played: typedStats.games_played ?? 0,
-            games_won: typedStats.games_won ?? 0,
-            mafia_wins: typedStats.mafia_wins ?? 0,
-            civilian_wins: typedStats.civilian_wins ?? 0,
-            doctor_wins: typedStats.doctor_wins ?? 0,
-            detective_wins: typedStats.detective_wins ?? 0,
-          });
-        }
-      }
+      await loadUserData();
+      await new Promise((resolve) => setTimeout(resolve, 800));
     } catch (err) {
-      console.error("Error refreshing home stats:", err);
+      console.warn("Pull to refresh error:", err);
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [loadUserData]);
 
-  const handleLogout = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      // ignore
-    }
-    if (onLogout) {
-      onLogout();
-    }
-  };
-
-  const handleCardSelect = (role: RoleData) => {
+  const handleRolePress = useCallback((role: RoleData) => {
     setSelectedRole(role);
     setIsDossierOpen(true);
-  };
+  }, []);
 
-  // Derived calculations from backend data
+  const handleLogout = useStableCallback(async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn("Sign out error:", err);
+    }
+    onLogout?.();
+  });
+
+  const winRate =
+    stats.games_played > 0
+      ? Math.round((stats.games_won / stats.games_played) * 100)
+      : 0;
   const displayName = profile?.username || userAlias || "Player";
-  const avatarKey = profile?.avatar_url as RoleId;
-  const hasValidAvatar = avatarKey && CHARACTER_IMAGES[avatarKey];
-  const gamesPlayed = stats.games_played;
-  const gamesWon = stats.games_won;
-  const winRate = gamesPlayed > 0 ? Math.round((gamesWon / gamesPlayed) * 100) : 0;
-  const playerLevel = Math.max(1, Math.floor(gamesPlayed / 5) + 1);
+  const initial = displayName.charAt(0).toUpperCase();
+
+  const avatarKey = profile?.avatar_url as RoleId | undefined;
+  const activeAvatarSource =
+    avatarKey && CHARACTER_IMAGES[avatarKey] ? CHARACTER_IMAGES[avatarKey] : null;
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Main Screen Body */}
+      {/* Main Viewport Content based on active navigation tab */}
       <View style={styles.mainContent}>
         {activeTab === "play" && (
-          <ScrollView
-            contentContainerStyle={styles.scrollContainer}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor="#e11d48"
-                colors={["#e11d48"]}
-              />
-            }
-          >
-            {/* Top Navigation / Status Header */}
-            <View style={styles.topHeaderBar}>
-              {/* Left: Only MAFIA */}
-              <Text style={styles.brandTitle}>MAFIA</Text>
+          <SnapchatPullRefreshScreen
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            renderHeader={() => (
+              <View
+                style={[
+                  styles.headerWrapper,
+                  { paddingTop: Math.max(insets.top + 8, 48) },
+                ]}
+              >
+                {/* Top Bar Header */}
+                <View style={styles.topHeaderBar}>
+                  <Text style={styles.brandTitle}>MAFIA</Text>
+                  <View style={styles.rightHeaderGroup}>
+                    <View style={styles.statsPill}>
+                      <Text style={styles.flagEmoji}>⚔️</Text>
+                      <Text style={styles.statsText}>
+                        WINS: <Text style={styles.statsCount}>{stats.games_won}</Text>
+                      </Text>
+                      <Text style={styles.winRateText}>({winRate}%)</Text>
+                    </View>
 
-              {/* Right: Dynamic Backend Stats Pill + Profile Icon */}
-              <View style={styles.rightHeaderGroup}>
-                {/* Stats Pill: Tapping directly opens profile modal */}
-                <TouchableOpacity
-                  style={styles.statsPill}
-                  activeOpacity={0.7}
-                  delayPressIn={0}
-                  hitSlop={{ top: 10, bottom: 10, left: 8, right: 6 }}
-                  onPress={() => setIsProfileModalOpen(true)}
-                >
-                  <Text style={styles.flagEmoji}>🏁</Text>
-                  {loading && !refreshing ? (
-                    <ActivityIndicator size="small" color="#facc15" style={{ transform: [{ scale: 0.7 }] }} />
-                  ) : (
-                    <Text style={styles.statsText}>
-                      <Text style={styles.statsCount}>{gamesPlayed}</Text> PLAYED •{" "}
-                      <Text style={styles.winRateText}>{winRate}% WIN</Text>
-                    </Text>
-                  )}
-                </TouchableOpacity>
-
-                {/* User Profile Avatar Icon Button */}
-                <TouchableOpacity
-                  style={styles.profileAvatarBtn}
-                  activeOpacity={0.7}
-                  delayPressIn={0}
-                  hitSlop={{ top: 10, bottom: 10, left: 6, right: 10 }}
-                  onPress={() => setIsProfileModalOpen(true)}
-                >
-                  {hasValidAvatar ? (
-                    <Image
-                      source={CHARACTER_IMAGES[avatarKey]}
-                      style={styles.headerAvatarImg}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <Text style={styles.headerAvatarInitial}>
-                      {(displayName || "P").charAt(0).toUpperCase()}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Quick Play Banner Card */}
-            <TouchableOpacity style={styles.quickPlayCard} activeOpacity={0.9}>
-              {/* Left Play Triangle Button */}
-              <View style={styles.playIconContainer}>
-                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                  <Path d="M7 4L19 12L7 20V4Z" fill="#ffffff" />
-                </Svg>
-              </View>
-
-              {/* Middle Play Info */}
-              <View style={styles.quickPlayDetails}>
-                <View style={styles.quickPlayHeaderRow}>
-                  <Text style={styles.quickPlayTitle}>QUICK PLAY</Text>
-                  <View style={styles.fastMatchTag}>
-                    <Text style={styles.fastMatchTagText}>FAST MATCH</Text>
+                    {/* Profile Pill / Button */}
+                    <TouchableOpacity
+                      style={styles.profileAvatarBtn}
+                      activeOpacity={0.8}
+                      onPress={() => setIsProfileModalOpen(true)}
+                    >
+                      {activeAvatarSource ? (
+                        <Image
+                          source={activeAvatarSource}
+                          style={styles.headerAvatarImg}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Text style={styles.headerAvatarInitial}>{initial}</Text>
+                      )}
+                    </TouchableOpacity>
                   </View>
                 </View>
-                <Text style={styles.quickPlaySub}>10-16 Players</Text>
               </View>
-            </TouchableOpacity>
-
-            {/* Two Action Cards: Create Room & Join By Code */}
+            )}
+            contentContainerStyle={styles.scrollContainer}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Action Cards: Create Room & Join Room */}
             <View style={styles.actionsGrid}>
-              {/* CREATE ROOM */}
-              <TouchableOpacity style={styles.actionBox} activeOpacity={0.85}>
-                <View style={styles.actionIconPill}>
-                  <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-                    <Circle cx="12" cy="12" r="9" stroke="#eab308" strokeWidth="2" />
-                    <Path d="M12 8V16M8 12H16" stroke="#eab308" strokeWidth="2" strokeLinecap="round" />
+              <TouchableOpacity
+                style={[styles.actionBox, styles.createRoomCard]}
+                activeOpacity={0.85}
+                onPress={onCreateRoom}
+              >
+                <View style={[styles.actionIconPill, styles.createRoomIconPill]}>
+                  <Svg width={26} height={26} viewBox="0 0 24 24">
+                    <Path
+                      d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"
+                      fill="#e11d48"
+                    />
                   </Svg>
                 </View>
-
                 <Text style={styles.actionBoxTitle}>CREATE ROOM</Text>
-                <Text style={styles.actionBoxSub}>Host Custom Game</Text>
-
+                <Text style={styles.actionBoxSub}>Host a custom game lobby with friends</Text>
                 <View style={styles.actionBoxFooter}>
-                  <Text style={[styles.actionBoxLink, { color: "#eab308" }]}>
-                    CUSTOM RULES ➔
+                  <Text style={[styles.actionBoxLink, { color: "#e11d48" }]}>
+                    HOST LOBBY →
                   </Text>
                 </View>
               </TouchableOpacity>
 
-              {/* JOIN BY CODE */}
-              <TouchableOpacity style={styles.actionBox} activeOpacity={0.85}>
-                <View style={styles.actionIconPill}>
-                  <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-                    <Rect x="4" y="4" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="10.25" y="4" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="16.5" y="4" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="4" y="10.25" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="10.25" y="10.25" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="16.5" y="10.25" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="4" y="16.5" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="10.25" y="16.5" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
-                    <Rect x="16.5" y="16.5" width="3.5" height="3.5" rx="1" fill="#94a3b8" />
+              <TouchableOpacity
+                style={[styles.actionBox, styles.joinRoomCard]}
+                activeOpacity={0.85}
+                onPress={onJoinRoom}
+              >
+                <View style={[styles.actionIconPill, styles.joinRoomIconPill]}>
+                  <Svg width={26} height={26} viewBox="0 0 24 24">
+                    <Path
+                      d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
+                      fill="#38bdf8"
+                    />
                   </Svg>
                 </View>
-
-                <Text style={styles.actionBoxTitle}>JOIN BY CODE</Text>
-                <Text style={styles.actionBoxSub}>Enter 6-Digit Room Key</Text>
-
+                <Text style={styles.actionBoxTitle}>JOIN ROOM</Text>
+                <Text style={styles.actionBoxSub}>Enter with 5-character code or list</Text>
                 <View style={styles.actionBoxFooter}>
-                  <Text style={[styles.actionBoxLink, { color: "#cbd5e1" }]}>
-                    DIRECT ENTRY 🔑
+                  <Text style={[styles.actionBoxLink, { color: "#38bdf8" }]}>
+                    FIND ROOM →
                   </Text>
                 </View>
               </TouchableOpacity>
             </View>
 
-            {/* Game Roles Section Header */}
+            {/* Roles Header */}
             <View style={styles.sectionHeaderRow}>
               <View style={styles.sectionTitleWrap}>
-                <Text style={styles.sectionIcon}>🎴</Text>
-                <Text style={styles.sectionTitleText}>GAME ROLES</Text>
+                <Text style={styles.sectionIcon}>🎭</Text>
+                <Text style={styles.sectionTitleText}>ROLES GUIDE</Text>
               </View>
               <Text style={styles.sectionSubtitleText}>4 UNIQUE ROLES</Text>
             </View>
 
-            {/* 2x2 Grid of Roles with Real Assets and Instant Flip */}
+            {/* Roles Grid */}
             <View style={styles.rolesGrid}>
-              {/* Row 1: Mafia & Detective */}
               <View style={styles.rolesRow}>
-                <RoleCard role={ROLES_DATA.mafia} onSelect={handleCardSelect} />
-                <RoleCard role={ROLES_DATA.detective} onSelect={handleCardSelect} />
+                <RoleCard
+                  role={ROLES_DATA.mafia}
+                  onSelect={handleRolePress}
+                />
+                <RoleCard
+                  role={ROLES_DATA.detective}
+                  onSelect={handleRolePress}
+                />
               </View>
-
-              {/* Row 2: Doctor & Civilian */}
               <View style={styles.rolesRow}>
-                <RoleCard role={ROLES_DATA.doctor} onSelect={handleCardSelect} />
-                <RoleCard role={ROLES_DATA.civilian} onSelect={handleCardSelect} />
+                <RoleCard
+                  role={ROLES_DATA.doctor}
+                  onSelect={handleRolePress}
+                />
+                <RoleCard
+                  role={ROLES_DATA.civilian}
+                  onSelect={handleRolePress}
+                />
               </View>
             </View>
-          </ScrollView>
+          </SnapchatPullRefreshScreen>
         )}
 
         {activeTab === "friends" && <FriendsScreen />}
 
         {activeTab === "settings" && (
-          <SettingsScreen userAlias={displayName} onLogout={handleLogout} onProfileUpdated={onRefresh} />
+          <SettingsScreen
+            userAlias={profile?.username || userAlias}
+            onLogout={handleLogout}
+            onProfileUpdated={loadUserData}
+          />
         )}
       </View>
 
@@ -436,7 +407,7 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
         onClose={() => setIsDossierOpen(false)}
       />
 
-      {/* User Profile Modal (Connected with Dynamic Backend Stats) */}
+      {/* User Profile Modal */}
       <Modal
         visible={isProfileModalOpen}
         transparent
@@ -449,49 +420,51 @@ export default function HomeScreen({ userAlias = "Player", onLogout }: HomeScree
               <View style={styles.profileModalCard}>
                 <View style={styles.profileModalHeader}>
                   <View style={styles.profileAvatarBust}>
-                    {hasValidAvatar ? (
+                    {activeAvatarSource ? (
                       <Image
-                        source={CHARACTER_IMAGES[avatarKey]}
+                        source={activeAvatarSource}
                         style={styles.modalAvatarImg}
                         resizeMode="cover"
                       />
                     ) : (
-                      <Text style={styles.profileAvatarInitial}>
-                        {(displayName || "O").charAt(0).toUpperCase()}
-                      </Text>
+                      <Text style={styles.profileAvatarInitial}>{initial}</Text>
                     )}
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.profileAliasName} numberOfLines={1}>
-                      {displayName}
-                    </Text>
-                    <Text style={styles.profileStatusTag}>VERIFIED PLAYER</Text>
+                  <View>
+                    <Text style={styles.profileAliasName}>{displayName}</Text>
+                    <Text style={styles.profileStatusTag}>ONLINE PLAYER</Text>
                   </View>
                 </View>
 
-                {/* Main Stats Row */}
+                {/* Stat Badges */}
                 <View style={styles.profileStatsRow}>
                   <View style={styles.profileStatBlock}>
-                    <Text style={styles.profileStatNumber}>{gamesPlayed}</Text>
-                    <Text style={styles.profileStatCaption}>MATCHES</Text>
+                    <Text style={styles.profileStatNumber}>
+                      {stats.games_played}
+                    </Text>
+                    <Text style={styles.profileStatCaption}>PLAYED</Text>
                   </View>
                   <View style={styles.profileStatBlock}>
-                    <Text style={[styles.profileStatNumber, { color: "#22c55e" }]}>{winRate}%</Text>
+                    <Text style={[styles.profileStatNumber, { color: "#22c55e" }]}>
+                      {stats.games_won}
+                    </Text>
+                    <Text style={styles.profileStatCaption}>VICTORIES</Text>
+                  </View>
+                  <View style={styles.profileStatBlock}>
+                    <Text style={[styles.profileStatNumber, { color: "#facc15" }]}>
+                      {winRate}%
+                    </Text>
                     <Text style={styles.profileStatCaption}>WIN RATE</Text>
-                  </View>
-                  <View style={styles.profileStatBlock}>
-                    <Text style={[styles.profileStatNumber, { color: "#eab308" }]}>Lvl {playerLevel}</Text>
-                    <Text style={styles.profileStatCaption}>LEVEL</Text>
                   </View>
                 </View>
 
-                {/* Role Breakdown Section */}
+                {/* Role Wins Breakdown */}
                 <View style={styles.roleBreakdownContainer}>
-                  <Text style={styles.roleBreakdownTitle}>WINS BY ROLE</Text>
+                  <Text style={styles.roleBreakdownTitle}>WINS BREAKDOWN</Text>
                   <View style={styles.roleBreakdownGrid}>
                     <View style={styles.roleBreakdownItem}>
                       <Text style={styles.roleBreakdownRole}>MAFIA</Text>
-                      <Text style={[styles.roleBreakdownWins, { color: "#f43f5e" }]}>
+                      <Text style={[styles.roleBreakdownWins, { color: "#ef4444" }]}>
                         {stats.mafia_wins}
                       </Text>
                     </View>
@@ -552,9 +525,13 @@ const styles = StyleSheet.create({
   mainContent: {
     flex: 1,
   },
+  headerWrapper: {
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
   scrollContainer: {
     paddingHorizontal: 16,
-    paddingTop: 52,
+    paddingTop: 8,
     paddingBottom: 28,
   },
 
@@ -563,7 +540,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
+    marginBottom: 8,
   },
   brandTitle: {
     color: "#e11d48",
@@ -607,7 +584,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: "#1a2232",
+    backgroundColor: "#1a2233",
     borderWidth: 1.5,
     borderColor: "#243046",
     alignItems: "center",
@@ -624,101 +601,81 @@ const styles = StyleSheet.create({
     height: "100%",
   },
 
-  /* Quick Play */
-  quickPlayCard: {
-    backgroundColor: "#dc2626",
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 14,
-    shadowColor: "#dc2626",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  playIconContainer: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-    backgroundColor: "#991b1b",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 10,
-  },
-  quickPlayDetails: {
-    flex: 1,
-  },
-  quickPlayHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 2,
-  },
-  quickPlayTitle: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
-  fastMatchTag: {
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  fastMatchTagText: {
-    color: "#ffffff",
-    fontSize: 8,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
-  quickPlaySub: {
-    color: "#fee2e2",
-    fontSize: 10.5,
-    fontWeight: "600",
-  },
-
   /* Action Cards */
   actionsGrid: {
     flexDirection: "row",
-    gap: 12,
-    marginBottom: 18,
+    gap: 14,
+    marginBottom: 22,
+    marginTop: 4,
   },
   actionBox: {
     flex: 1,
-    backgroundColor: "#111724",
-    borderWidth: 1,
-    borderColor: "#1e2638",
-    borderRadius: 14,
-    padding: 14,
+    backgroundColor: "#101624",
+    borderWidth: 1.5,
+    borderColor: "#1e293b",
+    borderRadius: 18,
+    padding: 18,
+    minHeight: 160,
+    justifyContent: "space-between",
+  },
+  createRoomCard: {
+    borderColor: "rgba(225, 29, 72, 0.35)",
+    backgroundColor: "#12111d",
+    shadowColor: "#e11d48",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  joinRoomCard: {
+    borderColor: "rgba(56, 189, 248, 0.35)",
+    backgroundColor: "#0d1624",
+    shadowColor: "#38bdf8",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 3,
   },
   actionIconPill: {
-    marginBottom: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  createRoomIconPill: {
+    backgroundColor: "rgba(225, 29, 72, 0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(225, 29, 72, 0.3)",
+  },
+  joinRoomIconPill: {
+    backgroundColor: "rgba(56, 189, 248, 0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(56, 189, 248, 0.3)",
   },
   actionBoxTitle: {
     color: "#ffffff",
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: "900",
-    letterSpacing: 0.5,
-    marginBottom: 2,
+    letterSpacing: 0.6,
+    marginBottom: 4,
   },
   actionBoxSub: {
     color: "#8e9eb5",
-    fontSize: 10,
-    marginBottom: 10,
+    fontSize: 11,
+    lineHeight: 15,
+    marginBottom: 14,
   },
   actionBoxFooter: {
     borderTopWidth: 1,
     borderTopColor: "#1a2233",
-    paddingTop: 8,
+    paddingTop: 10,
   },
   actionBoxLink: {
-    fontSize: 9.5,
-    fontWeight: "800",
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.6,
   },
 
   /* Section Header */
@@ -846,7 +803,6 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     fontWeight: "800",
     letterSpacing: 1,
-    marginBottom: 8,
   },
   roleBreakdownGrid: {
     flexDirection: "row",
@@ -886,5 +842,39 @@ const styles = StyleSheet.create({
     color: "#8e9eb5",
     fontSize: 11,
     fontWeight: "700",
+  },
+
+  /* Error Banner (Fix 3) */
+  errorBanner: {
+    backgroundColor: "#1c1114",
+    borderWidth: 1,
+    borderColor: "#7f1d1d",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  errorBannerText: {
+    flex: 1,
+    color: "#fca5a5",
+    fontSize: 11.5,
+    fontWeight: "600",
+    lineHeight: 16,
+  },
+  errorRetryBtn: {
+    backgroundColor: "#dc2626",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  errorRetryText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
 });

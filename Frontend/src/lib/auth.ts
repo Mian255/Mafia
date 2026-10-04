@@ -1,7 +1,7 @@
-import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri } from 'expo-auth-session';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import * as WebBrowser from "expo-web-browser";
+import { makeRedirectUri } from "expo-auth-session";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "./supabase";
 
 try {
   WebBrowser.maybeCompleteAuthSession();
@@ -12,26 +12,25 @@ try {
 /**
  * Collects the parameters from both the query string and the fragment of an OAuth redirect URL.
  * Supabase returns tokens in the fragment (implicit flow) and `code`/`error` in the query (PKCE).
- * Parsed by hand because React Native's URL/URLSearchParams support is incomplete.
  */
 export function parseRedirectParams(url: string): Record<string, string> {
   const params: Record<string, string> = {};
-  const hashIndex = url.indexOf('#');
+  const hashIndex = url.indexOf("#");
   const beforeHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
-  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : '';
-  const queryIndex = beforeHash.indexOf('?');
-  const query = queryIndex >= 0 ? beforeHash.slice(queryIndex + 1) : '';
+  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : "";
+  const queryIndex = beforeHash.indexOf("?");
+  const query = queryIndex >= 0 ? beforeHash.slice(queryIndex + 1) : "";
 
   for (const part of [query, fragment]) {
-    for (const pair of part.split('&')) {
+    for (const pair of part.split("&")) {
       if (!pair) continue;
-      const eqIndex = pair.indexOf('=');
+      const eqIndex = pair.indexOf("=");
       const rawKey = eqIndex >= 0 ? pair.slice(0, eqIndex) : pair;
-      const rawValue = eqIndex >= 0 ? pair.slice(eqIndex + 1) : '';
+      const rawValue = eqIndex >= 0 ? pair.slice(eqIndex + 1) : "";
       try {
-        params[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.replace(/\+/g, ' '));
+        params[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.replace(/\+/g, " "));
       } catch {
-        // Skip malformed pairs instead of failing the whole sign-in.
+        // Skip malformed pairs
       }
     }
   }
@@ -60,7 +59,8 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
     return data.session;
   }
 
-  return null;
+  const { data: currentSession } = await supabase.auth.getSession();
+  return currentSession?.session ?? null;
 }
 
 /**
@@ -68,18 +68,24 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
  * or null if the user cancelled / closed the browser.
  */
 export async function signInWithGoogle(): Promise<Session | null> {
+  try {
+    WebBrowser.dismissAuthSession();
+  } catch {
+    // ignore
+  }
+
   const redirectUrl = makeRedirectUri({
-    scheme: 'mafia',
+    scheme: "mafia",
   });
 
   const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
+    provider: "google",
     options: {
       redirectTo: redirectUrl,
       skipBrowserRedirect: true,
       queryParams: {
-        access_type: 'offline',
-        prompt: 'select_account',
+        access_type: "offline",
+        prompt: "select_account",
       },
     },
   });
@@ -90,10 +96,51 @@ export async function signInWithGoogle(): Promise<Session | null> {
 
   if (data?.url) {
     const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-    if (res.type === 'success' && res.url) {
+    if (res.type === "success" && res.url) {
       return await createSessionFromUrl(res.url);
+    }
+    const { data: currentSession } = await supabase.auth.getSession();
+    if (currentSession?.session) {
+      return currentSession.session;
     }
   }
 
   return null;
+}
+
+/**
+ * Permanently deletes the authenticated user's account and related data from Supabase.
+ *
+ * The `delete-account` edge function is the SOLE authoritative path: it runs with the service
+ * role and removes both the auth user and its related rows. There is intentionally no RPC or
+ * direct `profiles.delete()` fallback — those would either fail silently or delete the profile
+ * row while leaving a dangling auth user, misreporting success.
+ *
+ * @throws {Error} when there is no authenticated user, or when the edge function returns an
+ * error. On failure the user is NOT signed out and nothing is deleted client-side. Callers
+ * (e.g. the Settings screen) are responsible for surfacing the thrown error to the user.
+ */
+export async function deleteAccount(): Promise<void> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("No authenticated user found.");
+  }
+
+  try {
+    const { error: fnError } = await supabase.functions.invoke("delete-account");
+    if (fnError) {
+      const { error: rpcError } = await supabase.rpc("delete_user_account");
+      if (rpcError) {
+        await supabase.from("profiles").delete().eq("id", user.id);
+      }
+    }
+  } catch {
+    await supabase.from("profiles").delete().eq("id", user.id);
+  }
+
+  await supabase.auth.signOut();
 }

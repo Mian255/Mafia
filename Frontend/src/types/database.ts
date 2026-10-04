@@ -1,12 +1,15 @@
+// NOTE: This file is hand-maintained. Once the new migrations are applied, it
+// should be regenerated from the live schema via `supabase gen types typescript`
+// (rather than hand-edited) to keep it in sync with the database.
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type GameRole = 'mafia' | 'civilian' | 'doctor' | 'detective';
 
+// Collapsed by 20260927000003_game_engine.sql: night is one simultaneous phase
+// (mafia/doctor/detective act together) rather than three sequential sub-phases.
 export type GamePhase =
   | 'role_reveal'
-  | 'night_mafia'
-  | 'night_doctor'
-  | 'night_detective'
+  | 'night'
   | 'dawn'
   | 'day_discussion'
   | 'day_voting'
@@ -86,27 +89,36 @@ export interface Database {
         Row: {
           id: string;
           room_id: string;
-          user_id: string;
+          user_id: string | null;
           is_ready: boolean;
           is_host: boolean;
+          is_bot: boolean;
+          bot_name: string | null;
+          bot_avatar: string | null;
           joined_at: string;
           last_seen_at: string;
         };
         Insert: {
           id?: string;
           room_id: string;
-          user_id: string;
+          user_id?: string | null;
           is_ready?: boolean;
           is_host?: boolean;
+          is_bot?: boolean;
+          bot_name?: string | null;
+          bot_avatar?: string | null;
           joined_at?: string;
           last_seen_at?: string;
         };
         Update: {
           id?: string;
           room_id?: string;
-          user_id?: string;
+          user_id?: string | null;
           is_ready?: boolean;
           is_host?: boolean;
+          is_bot?: boolean;
+          bot_name?: string | null;
+          bot_avatar?: string | null;
           last_seen_at?: string;
         };
         Relationships: [];
@@ -267,9 +279,15 @@ export interface Database {
         Row: {
           id: string;
           game_id: string;
-          user_id: string;
+          // Nullable + bot columns added by 20260927000003_game_engine.sql: bots are
+          // real game_players rows (user_id NULL, is_bot=true) resolved virtually.
+          user_id: string | null;
           role: GameRole;
           is_alive: boolean;
+          is_bot: boolean;
+          bot_name: string | null;
+          bot_avatar: string | null;
+          seat_number: number | null;
           death_round: number | null;
           death_phase: string | null;
           death_reason: string | null;
@@ -278,9 +296,13 @@ export interface Database {
         Insert: {
           id?: string;
           game_id: string;
-          user_id: string;
+          user_id?: string | null;
           role: GameRole;
           is_alive?: boolean;
+          is_bot?: boolean;
+          bot_name?: string | null;
+          bot_avatar?: string | null;
+          seat_number?: number | null;
           death_round?: number | null;
           death_phase?: string | null;
           death_reason?: string | null;
@@ -301,7 +323,10 @@ export interface Database {
           round_number: number;
           actor_id: string;
           role: GameRole;
-          target_id: string;
+          // target_id is legacy (profiles-based) and now nullable; the engine targets
+          // the seat via target_player_id (game_players.id), added by 20260927000003.
+          target_id: string | null;
+          target_player_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -310,11 +335,13 @@ export interface Database {
           round_number: number;
           actor_id: string;
           role: GameRole;
-          target_id: string;
+          target_id?: string | null;
+          target_player_id?: string | null;
           created_at?: string;
         };
         Update: {
-          target_id?: string;
+          target_id?: string | null;
+          target_player_id?: string | null;
         };
         Relationships: [];
       };
@@ -325,6 +352,8 @@ export interface Database {
           round_number: number;
           voter_id: string;
           target_id: string | null;
+          // Seat-based vote target (game_players.id), added by 20260927000003.
+          target_player_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -333,10 +362,12 @@ export interface Database {
           round_number: number;
           voter_id: string;
           target_id?: string | null;
+          target_player_id?: string | null;
           created_at?: string;
         };
         Update: {
           target_id?: string | null;
+          target_player_id?: string | null;
         };
         Relationships: [];
       };
@@ -366,7 +397,9 @@ export interface Database {
           id: string;
           room_id: string;
           game_id: string | null;
-          sender_id: string;
+          // Nullable since 20260927000004: AI bot messages have no profile.
+          sender_id: string | null;
+          sender_display: string | null;
           channel: ChatChannel;
           content: string;
           created_at: string;
@@ -375,13 +408,15 @@ export interface Database {
           id?: string;
           room_id: string;
           game_id?: string | null;
-          sender_id: string;
+          sender_id?: string | null;
+          sender_display?: string | null;
           channel: ChatChannel;
           content: string;
           created_at?: string;
         };
         Update: {
           content?: string;
+          sender_display?: string | null;
         };
         Relationships: [];
       };
@@ -418,8 +453,86 @@ export interface Database {
         Relationships: [];
       };
     };
-    Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
+    Views: {
+      // Role-masked roster (20260927000001 + 20260927000003). `role` is NULL unless
+      // the caller is that seat, a fellow mafia, or the game is over. security_invoker
+      // = false, so it returns the full roster while base-table RLS stays enforced.
+      game_players_view: {
+        Row: {
+          id: string;
+          game_id: string;
+          user_id: string | null;
+          role: GameRole | null;
+          is_alive: boolean;
+          is_bot: boolean;
+          bot_name: string | null;
+          bot_avatar: string | null;
+          seat_number: number | null;
+          death_round: number | null;
+          death_phase: string | null;
+          death_reason: string | null;
+          created_at: string;
+        };
+        Relationships: [];
+      };
+    };
+    Functions: {
+      delete_user_account: {
+        Args: Record<string, never>;
+        Returns: void;
+      };
+      add_bot_to_room: {
+        Args: {
+          p_room_id: string;
+          p_bot_name: string;
+          p_bot_avatar: string;
+        };
+        Returns: Json;
+      };
+      remove_bot_from_room: {
+        Args: {
+          p_room_id: string;
+          p_player_id: string;
+        };
+        Returns: boolean;
+      };
+      // Added by the phase-3 remediation migrations (20260927000001/2). This file is
+      // hand-maintained; regenerate via `supabase gen types` once those are applied.
+      get_email_for_username: {
+        Args: { p_username: string };
+        Returns: string | null;
+      };
+      accept_friend_request: {
+        Args: { p_request_id: string };
+        Returns: undefined;
+      };
+      join_room_atomic: {
+        Args: { p_room_code: string };
+        Returns: Database['public']['Tables']['room_players']['Row'];
+      };
+      // Added by the game engine migration (20260927000003). start_game and
+      // advance_game_phase return the games Row (mirrors join_room_atomic above).
+      start_game: {
+        Args: { p_room_id: string };
+        Returns: Database['public']['Tables']['games']['Row'];
+      };
+      submit_night_action: {
+        Args: { p_game_id: string; p_target_player_id: string };
+        Returns: undefined;
+      };
+      cast_vote: {
+        Args: { p_game_id: string; p_target_player_id: string | null };
+        Returns: undefined;
+      };
+      advance_game_phase: {
+        Args: { p_game_id: string };
+        Returns: Database['public']['Tables']['games']['Row'];
+      };
+      get_investigation_result: {
+        Args: { p_game_id: string; p_round_number: number };
+        Returns: boolean;
+      };
+    };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
   };

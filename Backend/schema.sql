@@ -43,18 +43,23 @@ CREATE POLICY "Users can update their own profile"
 
 -- Auto-create profile trigger on auth signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 BEGIN
-    INSERT INTO public.profiles (id, username, avatar_url)
+    INSERT INTO public.profiles (id, username, email, avatar_url)
     VALUES (
         NEW.id,
-        COALESCE(NEW.raw_user_meta_data->>'username', 'Player_' || SUBSTRING(NEW.id::text, 1, 6)),
-        NEW.raw_user_meta_data->>'avatar_url'
+        COALESCE(
+            NULLIF(TRIM(NEW.raw_user_meta_data->>'username'), ''),
+            'Player_' || SUBSTRING(NEW.id::text FROM 1 FOR 6)
+        ),
+        NEW.email,
+        NULL -- Avatars are only selected from within the game
     )
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT (id) DO UPDATE SET
+        email = COALESCE(EXCLUDED.email, public.profiles.email);
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created

@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,13 +17,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { supabase } from '../../lib/supabase';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
+import { SnapchatPullRefreshScreen } from '../../components/refresh';
 
 interface FriendItem {
   id: string;
   username: string;
-  email?: string | null;
   avatar_url: string | null;
-  isOnline?: boolean;
 }
 
 interface FriendRequestItem {
@@ -38,7 +36,6 @@ interface FriendRequestItem {
 interface SearchUserResult {
   id: string;
   username: string;
-  email?: string | null;
   avatar_url: string | null;
   isFriend: boolean;
   hasPendingRequest: boolean;
@@ -62,6 +59,7 @@ export default function FriendsScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const activeSearchTokenRef = useRef<number>(0);
   const searchDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadTokenRef = useRef(0);
 
   // Modals & Action States
   const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
@@ -73,15 +71,22 @@ export default function FriendsScreen() {
     null
   );
 
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
-    setTimeout(() => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
       setToastMessage(null);
+      toastTimerRef.current = null;
     }, 4000);
-  };
+  }, []);
 
   // 1. Data Fetch & Refresh Logic
   const loadFriendsData = useCallback(async () => {
+    const token = ++loadTokenRef.current;
     try {
       const {
         data: { user },
@@ -101,38 +106,51 @@ export default function FriendsScreen() {
 
         const { data: friendshipsData } = await supabase
           .from('friendships')
-          .select('friend_id')
-          .eq('user_id', user.id);
+          .select('user_id, friend_id')
+          .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
-        const friendIds = friendshipsData
-          ? friendshipsData.map((f: { friend_id: string }) => f.friend_id)
-          : [];
+        if (token !== loadTokenRef.current) return;
 
-        if (friendIds.length > 0) {
-          const { data: friendProfiles } = await supabase
-            .from('profiles')
-            .select('id, username, email, avatar_url')
-            .in('id', friendIds);
+        if (friendshipsData) {
+          const friendIds = Array.from(
+            new Set(
+              (friendshipsData || [])
+                .map((f: { user_id: string; friend_id: string }) =>
+                  f.user_id === user.id ? f.friend_id : f.user_id
+                )
+                .filter((id: string) => id && id !== user.id)
+            )
+          );
 
-          if (friendProfiles) {
-            const formattedFriends: FriendItem[] = friendProfiles.map((p: any) => ({
-              id: p.id,
-              username: p.username || 'Player',
-              email: p.email || null,
-              avatar_url: p.avatar_url,
-              isOnline: true,
-            }));
-            setFriends(formattedFriends);
+          if (friendIds.length > 0) {
+            const { data: friendProfiles } = await supabase
+              .from('profiles')
+              .select('id, username, avatar_url')
+              .in('id', friendIds);
+
+            if (token !== loadTokenRef.current) return;
+
+            if (friendProfiles) {
+              const formattedFriends: FriendItem[] = friendProfiles.map((p: any) => ({
+                id: p.id,
+                username: p.username || 'Player',
+                avatar_url: p.avatar_url,
+              }));
+              setFriends(formattedFriends);
+            }
+          } else {
+            setFriends([]);
           }
-        } else {
-          setFriends([]);
         }
 
         const { data: incomingRequests } = await supabase
           .from('friend_requests')
           .select('id, sender_id, created_at')
           .eq('receiver_id', user.id)
-          .eq('status', 'pending');
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false });
+
+        if (token !== loadTokenRef.current) return;
 
         if (incomingRequests && incomingRequests.length > 0) {
           const senderIds = incomingRequests.map((r: { sender_id: string }) => r.sender_id);
@@ -140,6 +158,8 @@ export default function FriendsScreen() {
             .from('profiles')
             .select('id, username, avatar_url')
             .in('id', senderIds);
+
+          if (token !== loadTokenRef.current) return;
 
           const profileMap = new Map();
           if (sendersProfiles) {
@@ -168,28 +188,52 @@ export default function FriendsScreen() {
           .eq('sender_id', user.id)
           .eq('status', 'pending');
 
+        if (token !== loadTokenRef.current) return;
+
         if (sentReqs) {
-          setSentRequestsSet(new Set(sentReqs.map((r: { receiver_id: string }) => r.receiver_id)));
+          setSentRequestsSet(new Set(sentReqs.map((r: any) => r.receiver_id)));
         }
       }
     } catch (err) {
       console.error('Error loading friends data:', err);
     } finally {
-      setIsLoading(false);
-      setRefreshing(false);
+      if (token === loadTokenRef.current) {
+        setIsLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadFriendsData();
-  };
+    try {
+      await loadFriendsData();
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    } catch (err) {
+      console.warn("Friends refresh error:", err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadFriendsData]);
 
-  // 2. Initial Subscription and Data Fetch
+  // 2. Real-Time DB Subscriptions
   useEffect(() => {
     let isMounted = true;
-    let friendsChannel: ReturnType<typeof supabase.channel> | null = null;
     let requestsChannel: ReturnType<typeof supabase.channel> | null = null;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    let friendsChannel: ReturnType<typeof supabase.channel> | null = null;
+
+    // Coalesce realtime bursts (accepting a request emits several events) into a
+    // single debounced reload. The token guard inside loadFriendsData still drops
+    // any stale response that resolves out of order.
+    const scheduleReload = () => {
+      if (!isMounted) return;
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        if (isMounted) loadFriendsData();
+      }, 300);
+    };
 
     const setupLiveListeners = async () => {
       try {
@@ -197,47 +241,54 @@ export default function FriendsScreen() {
           data: { user },
         } = await supabase.auth.getUser();
 
-        if (user && isMounted) {
-          await loadFriendsData();
-
-          requestsChannel = supabase
-            .channel(`incoming_requests_${user.id}`)
-            .on(
-              'postgres_changes',
-              {
-                event: '*',
-                schema: 'public',
-                table: 'friend_requests',
-                filter: `receiver_id=eq.${user.id}`,
-              },
-              () => {
-                if (isMounted) {
-                  loadFriendsData();
-                }
-              }
-            )
-            .subscribe();
-
-          friendsChannel = supabase
-            .channel(`friendships_live_${user.id}`)
-            .on(
-              'postgres_changes',
-              {
-                event: '*',
-                schema: 'public',
-                table: 'friendships',
-                filter: `user_id=eq.${user.id}`,
-              },
-              () => {
-                if (isMounted) {
-                  loadFriendsData();
-                }
-              }
-            )
-            .subscribe();
-        } else if (isMounted) {
-          setIsLoading(false);
+        if (!user) {
+          if (isMounted) setIsLoading(false);
+          return;
         }
+
+        await loadFriendsData();
+
+        // Re-check after the await: the component may have unmounted while the
+        // initial load was in flight, so don't create channels we can't clean up.
+        if (!isMounted) return;
+
+        requestsChannel = supabase
+          .channel(`incoming_requests_${user.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'friend_requests',
+              filter: `receiver_id=eq.${user.id}`,
+            },
+            scheduleReload
+          )
+          .subscribe();
+
+        friendsChannel = supabase
+          .channel(`friendships_live_${user.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'friendships',
+              filter: `user_id=eq.${user.id}`,
+            },
+            scheduleReload
+          )
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'friendships',
+              filter: `friend_id=eq.${user.id}`,
+            },
+            scheduleReload
+          )
+          .subscribe();
       } catch (err) {
         console.error('Error initializing listeners:', err);
         if (isMounted) setIsLoading(false);
@@ -251,53 +302,53 @@ export default function FriendsScreen() {
       if (searchDebounceTimerRef.current) {
         clearTimeout(searchDebounceTimerRef.current);
       }
+      if (reloadTimer) clearTimeout(reloadTimer);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (requestsChannel) supabase.removeChannel(requestsChannel);
       if (friendsChannel) supabase.removeChannel(friendsChannel);
     };
   }, [loadFriendsData]);
 
-  // 3. Auto-Suggest Execution Logic (Searching username OR email)
+  // 3. Auto-Suggest Execution Logic (username-only, parameterized search)
   const executeSuggestQuery = useCallback(
     async (queryText: string, searchToken: number) => {
       try {
         const friendIdsSet = new Set(friends.map((f) => f.id));
 
-        // Query profiles matching username OR email substring
-        let dbQuery = supabase
+        // Escape LIKE metacharacters so user input cannot act as wildcards
+        const escaped = queryText.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+        const { data: matchedProfiles, error: searchErr } = await supabase
           .from('profiles')
-          .select('id, username, email, avatar_url')
-          .or(`username.ilike.%${queryText}%,email.ilike.%${queryText}%`)
+          .select('id, username, avatar_url')
+          .ilike('username', `%${escaped}%`)
           .limit(20);
 
-        let { data: matchedProfiles, error: searchErr } = await dbQuery;
+        if (searchToken !== activeSearchTokenRef.current) {
+          return;
+        }
 
-        // Fallback to username only if needed
         if (searchErr) {
-          const fallbackRes = await supabase
-            .from('profiles')
-            .select('id, username, avatar_url')
-            .ilike('username', `%${queryText}%`)
-            .limit(20);
-          matchedProfiles = fallbackRes.data as any;
+          console.error('Error suggesting players:', searchErr);
+          setSearchResults([]);
+          setIsSearching(false);
+          return;
         }
 
-        if (searchToken === activeSearchTokenRef.current) {
-          if (matchedProfiles && matchedProfiles.length > 0) {
-            const results: SearchUserResult[] = matchedProfiles.map((p: any) => ({
-              id: p.id,
-              username: p.username || 'Player',
-              email: p.email || null,
-              avatar_url: p.avatar_url,
-              isFriend: friendIdsSet.has(p.id),
-              hasPendingRequest: sentRequestsSet.has(p.id),
-              isSelf: p.id === currentUserId,
-            }));
-            setSearchResults(results);
-          } else {
-            setSearchResults([]);
-          }
-          setIsSearching(false);
+        if (matchedProfiles && matchedProfiles.length > 0) {
+          const results: SearchUserResult[] = matchedProfiles.map((p: any) => ({
+            id: p.id,
+            username: p.username || 'Player',
+            avatar_url: p.avatar_url,
+            isFriend: friendIdsSet.has(p.id),
+            hasPendingRequest: sentRequestsSet.has(p.id),
+            isSelf: p.id === currentUserId,
+          }));
+          setSearchResults(results);
+        } else {
+          setSearchResults([]);
         }
+        setIsSearching(false);
       } catch (err) {
         if (searchToken === activeSearchTokenRef.current) {
           console.error('Error suggesting players:', err);
@@ -340,8 +391,47 @@ export default function FriendsScreen() {
     }
     if (sendingRequestUserId) return;
 
+    // Guard: cannot befriend yourself.
+    if (targetUserId === currentUserId) {
+      showToast('You cannot send a friend request to yourself', 'error');
+      return;
+    }
+
+    // Guard: already friends.
+    if (friends.some((f) => f.id === targetUserId)) {
+      showToast(`You are already friends with ${targetUsername}`, 'error');
+      return;
+    }
+
+    // Guard: they already sent us a pending request -> accept it instead of
+    // creating a duplicate in the opposite direction.
+    const reciprocal = pendingRequests.find((r) => r.sender_id === targetUserId);
+    if (reciprocal) {
+      await handleAcceptRequest(reciprocal);
+      return;
+    }
+
+    // Guard: we already have a pending outbound request.
+    if (sentRequestsSet.has(targetUserId)) {
+      showToast(`Friend request already sent to ${targetUsername}`, 'error');
+      return;
+    }
+
     setSendingRequestUserId(targetUserId);
     try {
+      // Best-effort block check (RLS only exposes rows where we are the blocker).
+      const { data: blockedRows } = await supabase
+        .from('blocked_users')
+        .select('id')
+        .eq('blocker_id', currentUserId)
+        .eq('blocked_id', targetUserId)
+        .limit(1);
+
+      if (blockedRows && blockedRows.length > 0) {
+        showToast(`You have blocked ${targetUsername}. Unblock them to send a request.`, 'error');
+        return;
+      }
+
       const { error } = await supabase.from('friend_requests').insert({
         sender_id: currentUserId,
         receiver_id: targetUserId,
@@ -349,7 +439,13 @@ export default function FriendsScreen() {
       } as never);
 
       if (error) {
-        showToast(error.message, 'error');
+        const isDuplicate =
+          (error as { code?: string }).code === '23505' ||
+          /duplicate|unique/i.test(error.message || '');
+        showToast(
+          isDuplicate ? `Friend request already sent to ${targetUsername}` : error.message,
+          'error'
+        );
       } else {
         setSentRequestsSet((prev) => new Set([...prev, targetUserId]));
         setSearchResults((prev) =>
@@ -373,23 +469,20 @@ export default function FriendsScreen() {
 
     setProcessingRequestId(request.id);
     try {
-      const { error: reqErr } = await supabase
-        .from('friend_requests')
-        .update({ status: 'accepted' } as never)
-        .eq('id', request.id);
+      // Atomic server-side accept: updates the request status AND creates the
+      // friendship in one transaction. Only claim success once it resolves.
+      const { error } = await supabase.rpc('accept_friend_request', {
+        p_request_id: request.id,
+      } as never);
 
-      if (reqErr) {
-        showToast(reqErr.message, 'error');
+      if (error) {
+        // Keep the request in the list so the user can retry.
+        showToast(error.message || 'Could not accept friend request', 'error');
         return;
       }
 
-      await supabase.from('friendships').insert([
-        { user_id: currentUserId, friend_id: request.sender_id },
-        { user_id: request.sender_id, friend_id: currentUserId },
-      ] as never);
-
-      showToast(`You are now friends with ${request.sender_username}!`);
       setPendingRequests((prev) => prev.filter((r) => r.id !== request.id));
+      showToast(`You are now friends with ${request.sender_username}!`);
       await loadFriendsData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error accepting friend request';
@@ -427,138 +520,163 @@ export default function FriendsScreen() {
   const isSearchActive = searchQuery.trim().length > 0;
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
+    <View style={styles.container}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
-        {/* Top Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerEyebrow}>COMMUNITY</Text>
-            <Text style={styles.title}>FRIENDS</Text>
-          </View>
+        <SnapchatPullRefreshScreen
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          renderHeader={() => (
+            <View
+              style={[
+                styles.headerWrapper,
+                { paddingTop: Math.max(insets.top + 8, 48) },
+              ]}
+            >
+              {/* Top Header */}
+              <View style={styles.header}>
+                <View>
+                  <Text style={styles.headerEyebrow}>COMMUNITY</Text>
+                  <Text style={styles.title}>FRIENDS</Text>
+                </View>
 
-          {/* Requests Button with Dynamic Badge */}
-          <TouchableOpacity
-            style={[
-              styles.requestsBtn,
-              pendingRequests.length > 0 && styles.requestsBtnActive,
-            ]}
-            activeOpacity={0.8}
-            onPress={() => setIsRequestsModalOpen(true)}
-          >
-            <Text style={styles.requestsBtnText}>REQUESTS</Text>
-            {pendingRequests.length > 0 && (
-              <View style={styles.badgeCountPill}>
-                <Text style={styles.badgeCountText}>{pendingRequests.length}</Text>
+                {/* Requests Button with Dynamic Badge */}
+                <TouchableOpacity
+                  style={[
+                    styles.requestsBtn,
+                    pendingRequests.length > 0 && styles.requestsBtnActive,
+                  ]}
+                  onPress={() => setIsRequestsModalOpen(true)}
+                  activeOpacity={0.8}
+                >
+                  <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                    <Path
+                      d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"
+                      stroke={pendingRequests.length > 0 ? '#ffffff' : '#94a3b8'}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                    />
+                    <Circle
+                      cx={8.5}
+                      cy={7}
+                      r={4}
+                      stroke={pendingRequests.length > 0 ? '#ffffff' : '#94a3b8'}
+                      strokeWidth={2}
+                    />
+                    <Path
+                      d="M20 8v6M23 11h-6"
+                      stroke={pendingRequests.length > 0 ? '#ffffff' : '#94a3b8'}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                    />
+                  </Svg>
+                  <Text
+                    style={[
+                      styles.requestsBtnText,
+                      pendingRequests.length > 0 && styles.requestsBtnTextActive,
+                    ]}
+                  >
+                    REQUESTS
+                  </Text>
+                  {pendingRequests.length > 0 && (
+                    <View style={styles.requestsBadge}>
+                      <Text style={styles.requestsBadgeText}>{pendingRequests.length}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
               </View>
-            )}
-          </TouchableOpacity>
-        </View>
 
-        {/* Live Search & Suggestions Bar */}
-        <View style={styles.searchBarWrapper}>
-          <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" style={styles.searchIcon}>
-            <Circle cx="11" cy="11" r="7" stroke="#64748b" strokeWidth="2" />
-            <Path d="M20 20L17 17" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
-          </Svg>
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            placeholder="Search by username or email..."
-            placeholderTextColor="#475569"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-          />
-          <View style={styles.searchRightGroup}>
-            {isSearching && (
-              <ActivityIndicator size="small" color="#e11d48" style={styles.searchSpinner} />
-            )}
-            {searchQuery.length > 0 && (
-              <TouchableOpacity
-                style={styles.clearSearchBtn}
-                onPress={() => handleSearchChange('')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Text style={styles.clearSearchText}>✕</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
+              {/* Real-time Feedback Toast */}
+              {toastMessage && (
+                <View
+                  style={[
+                    styles.toastBanner,
+                    toastMessage.type === 'error' ? styles.toastError : styles.toastSuccess,
+                  ]}
+                >
+                  <Text style={styles.toastEmoji}>
+                    {toastMessage.type === 'error' ? '⚠️' : '✓'}
+                  </Text>
+                  <Text style={styles.toastText}>{toastMessage.text}</Text>
+                </View>
+              )}
 
-        {/* Global Toast Feedback */}
-        {toastMessage && (
-          <View
-            style={[
-              styles.toastBanner,
-              toastMessage.type === 'error' ? styles.toastError : styles.toastSuccess,
-            ]}
-          >
-            <Text style={styles.toastEmoji}>
-              {toastMessage.type === 'error' ? '⚠️' : '✓'}
-            </Text>
-            <Text style={styles.toastText}>{toastMessage.text}</Text>
-          </View>
-        )}
+              {/* Instant Search Bar */}
+              <View style={styles.searchContainer}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" style={styles.searchIcon}>
+                  <Path
+                    d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"
+                    fill="#64748b"
+                  />
+                </Svg>
 
-        {/* Main List Area */}
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: Math.max(insets.bottom + 80, 100) },
-          ]}
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Find players by username or email..."
+                  placeholderTextColor="#475569"
+                  value={searchQuery}
+                  onChangeText={handleSearchChange}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <View style={styles.searchRightGroup}>
+                  {isSearching && (
+                    <ActivityIndicator size="small" color="#e11d48" style={styles.searchSpinner} />
+                  )}
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => handleSearchChange('')}
+                      style={styles.clearSearchBtn}
+                    >
+                      <Text style={styles.clearSearchText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </View>
+          )}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom + 80, 100) }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#e11d48"
-              colors={['#e11d48']}
-            />
-          }
         >
-          {/* LIVE SUGGESTIONS / SEARCH RESULTS VIEW */}
+          {/* A. SEARCH SUGGESTIONS VIEW */}
           {isSearchActive ? (
             <View style={styles.sectionBlock}>
               <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionHeader}>
-                  SEARCH RESULTS {searchResults.length > 0 ? `(${searchResults.length})` : ''}
-                </Text>
+                <Text style={styles.sectionHeader}>MATCHING PLAYERS</Text>
                 {isSearching && <Text style={styles.searchingHintText}>Searching...</Text>}
               </View>
 
               {searchResults.length === 0 && !isSearching ? (
                 <View style={styles.emptyStateCard}>
                   <Text style={styles.emptyStateEmoji}>🔍</Text>
-                  <Text style={styles.emptyStateTitle}>No Players Found</Text>
+                  <Text style={styles.emptyStateTitle}>NO USERS FOUND</Text>
                   <Text style={styles.emptyStateSub}>
-                    No registered player found matching &quot;{searchQuery}&quot;. Try searching for &quot;Vito&quot; or &quot;Player&quot;.
+                    We could not find any player matching &quot;{searchQuery.trim()}&quot;.
                   </Text>
                 </View>
               ) : (
                 <View style={styles.cardsList}>
                   {searchResults.map((user) => {
-                    const avatarKey = user.avatar_url as RoleId;
-                    const avatarImage = avatarKey && CHARACTER_IMAGES[avatarKey];
+                    const avatarImg =
+                      user.avatar_url && CHARACTER_IMAGES[user.avatar_url as RoleId];
+                    const initial = (user.username || 'P').charAt(0).toUpperCase();
 
                     return (
                       <View key={user.id} style={styles.userCard}>
                         {/* Avatar */}
                         <View style={styles.avatarCircle}>
-                          {avatarImage ? (
-                            <Image source={avatarImage} style={styles.avatarImg} resizeMode="cover" />
+                          {avatarImg ? (
+                            <Image source={avatarImg} style={styles.avatarImg} resizeMode="cover" />
                           ) : (
-                            <Text style={styles.avatarLetter}>
-                              {(user.username || 'P').charAt(0).toUpperCase()}
-                            </Text>
+                            <Text style={styles.avatarLetter}>{initial}</Text>
                           )}
                         </View>
 
-                        {/* Details */}
+                        {/* User info */}
                         <View style={styles.userInfoCol}>
                           <View style={styles.nameRow}>
                             <Text style={styles.userNameText}>{user.username}</Text>
@@ -568,33 +686,35 @@ export default function FriendsScreen() {
                               </View>
                             )}
                           </View>
-                          <Text style={styles.userSubText}>
-                            {user.email ? user.email : 'Registered Player'}
-                          </Text>
+                          <Text style={styles.userSubText}>Registered Player</Text>
                         </View>
 
-                        {/* Action Button */}
-                        {user.isSelf ? null : user.isFriend ? (
-                          <View style={styles.alreadyFriendsTag}>
-                            <Text style={styles.alreadyFriendsText}>FRIENDS</Text>
-                          </View>
-                        ) : user.hasPendingRequest ? (
-                          <View style={styles.pendingTag}>
-                            <Text style={styles.pendingTagText}>REQUEST SENT</Text>
-                          </View>
-                        ) : (
-                          <TouchableOpacity
-                            style={styles.addFriendBtn}
-                            activeOpacity={0.8}
-                            disabled={sendingRequestUserId === user.id}
-                            onPress={() => handleSendFriendRequest(user.id, user.username)}
-                          >
-                            {sendingRequestUserId === user.id ? (
-                              <ActivityIndicator size="small" color="#ffffff" />
+                        {/* Action state */}
+                        {!user.isSelf && (
+                          <View>
+                            {user.isFriend ? (
+                              <View style={styles.alreadyFriendsTag}>
+                                <Text style={styles.alreadyFriendsText}>FRIENDS ✓</Text>
+                              </View>
+                            ) : user.hasPendingRequest ? (
+                              <View style={styles.pendingTag}>
+                                <Text style={styles.pendingTagText}>PENDING...</Text>
+                              </View>
                             ) : (
-                              <Text style={styles.addFriendBtnText}>+ ADD</Text>
+                              <TouchableOpacity
+                                style={styles.addFriendBtn}
+                                activeOpacity={0.8}
+                                disabled={sendingRequestUserId === user.id}
+                                onPress={() => handleSendFriendRequest(user.id, user.username)}
+                              >
+                                {sendingRequestUserId === user.id ? (
+                                  <ActivityIndicator size="small" color="#ffffff" />
+                                ) : (
+                                  <Text style={styles.addFriendBtnText}>+ ADD FRIEND</Text>
+                                )}
+                              </TouchableOpacity>
                             )}
-                          </TouchableOpacity>
+                          </View>
                         )}
                       </View>
                     );
@@ -603,172 +723,166 @@ export default function FriendsScreen() {
               )}
             </View>
           ) : (
-            /* FRIENDS LIST VIEW */
-            <View style={styles.sectionBlock}>
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionHeader}>
-                  YOUR FRIENDS ({friends.length})
-                </Text>
-              </View>
-
-              {isLoading ? (
+            /* B. DEFAULT FRIENDS LIST VIEW */
+            <View>
+              {isLoading && !refreshing ? (
                 <View style={styles.loadingWrapper}>
                   <ActivityIndicator size="large" color="#e11d48" />
-                  <Text style={styles.loadingText}>Loading friends...</Text>
+                  <Text style={styles.loadingText}>LOADING FRIENDS...</Text>
                 </View>
               ) : friends.length === 0 ? (
                 <View style={styles.emptyStateCard}>
                   <Text style={styles.emptyStateEmoji}>👥</Text>
-                  <Text style={styles.emptyStateTitle}>No Friends Added Yet</Text>
+                  <Text style={styles.emptyStateTitle}>NO FRIENDS YET</Text>
                   <Text style={styles.emptyStateSub}>
-                    Start typing a username or email in the search bar above to see live suggestions and add players.
+                    Start typing a username in the search bar above to see live suggestions and add players.
                   </Text>
                 </View>
               ) : (
-                <View style={styles.cardsList}>
-                  {friends.map((friend) => {
-                    const avatarKey = friend.avatar_url as RoleId;
-                    const avatarImage = avatarKey && CHARACTER_IMAGES[avatarKey];
+                <View style={styles.sectionBlock}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionHeader}>ALL FRIENDS ({friends.length})</Text>
+                  </View>
 
-                    return (
-                      <View key={friend.id} style={styles.userCard}>
-                        {/* Avatar */}
-                        <View style={styles.avatarCircle}>
-                          {avatarImage ? (
-                            <Image source={avatarImage} style={styles.avatarImg} resizeMode="cover" />
-                          ) : (
-                            <Text style={styles.avatarLetter}>
-                              {(friend.username || 'P').charAt(0).toUpperCase()}
-                            </Text>
-                          )}
-                          <View style={styles.onlineDot} />
-                        </View>
+                  <View style={styles.cardsList}>
+                    {friends.map((friend) => {
+                      const avatarImg =
+                        friend.avatar_url && CHARACTER_IMAGES[friend.avatar_url as RoleId];
+                      const initial = (friend.username || 'P').charAt(0).toUpperCase();
 
-                        {/* Details */}
-                        <View style={styles.userInfoCol}>
-                          <Text style={styles.userNameText}>{friend.username}</Text>
-                          <Text style={styles.onlineStatusText}>Online</Text>
+                      return (
+                        <View key={friend.id} style={styles.userCard}>
+                          <View style={styles.avatarCircle}>
+                            {avatarImg ? (
+                              <Image
+                                source={avatarImg}
+                                style={styles.avatarImg}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <Text style={styles.avatarLetter}>{initial}</Text>
+                            )}
+                            <View style={styles.onlineDot} />
+                          </View>
+
+                          <View style={styles.userInfoCol}>
+                            <Text style={styles.userNameText}>{friend.username}</Text>
+                            <Text style={styles.onlineStatusText}>Ready to play</Text>
+                          </View>
                         </View>
-                      </View>
-                    );
-                  })}
+                      );
+                    })}
+                  </View>
                 </View>
               )}
             </View>
           )}
-        </ScrollView>
+        </SnapchatPullRefreshScreen>
+      </KeyboardAvoidingView>
 
-        {/* FRIEND REQUESTS MODAL */}
-        <Modal
-          visible={isRequestsModalOpen}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setIsRequestsModalOpen(false)}
-        >
-          <TouchableWithoutFeedback onPress={() => setIsRequestsModalOpen(false)}>
-            <View style={styles.modalBackdrop}>
-              <TouchableWithoutFeedback>
-                <View style={styles.modalCard}>
-                  <View style={styles.modalHeaderRow}>
-                    <Text style={styles.modalTitle}>FRIEND REQUESTS</Text>
-                    <TouchableOpacity
-                      style={styles.modalCloseBtn}
-                      onPress={() => setIsRequestsModalOpen(false)}
-                    >
-                      <Text style={styles.modalCloseBtnText}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.modalSub}>
-                    Players who want to connect with you
-                  </Text>
-
-                  {pendingRequests.length === 0 ? (
-                    <View style={styles.emptyRequestsBox}>
-                      <Text style={styles.emptyRequestsEmoji}>📭</Text>
-                      <Text style={styles.emptyRequestsTitle}>No Pending Requests</Text>
-                      <Text style={styles.emptyRequestsSub}>
-                        You have no incoming friend requests at the moment.
-                      </Text>
-                    </View>
-                  ) : (
-                    <ScrollView
-                      style={styles.requestsScrollView}
-                      showsVerticalScrollIndicator={false}
-                    >
-                      <View style={styles.requestsList}>
-                        {pendingRequests.map((request) => {
-                          const reqAvatarKey = request.sender_avatar as RoleId;
-                          const reqAvatarImage = reqAvatarKey && CHARACTER_IMAGES[reqAvatarKey];
-                          const isProcessing = processingRequestId === request.id;
-
-                          return (
-                            <View key={request.id} style={styles.requestCard}>
-                              {/* Avatar */}
-                              <View style={styles.requestAvatarCircle}>
-                                {reqAvatarImage ? (
-                                  <Image
-                                    source={reqAvatarImage}
-                                    style={styles.avatarImg}
-                                    resizeMode="cover"
-                                  />
-                                ) : (
-                                  <Text style={styles.avatarLetter}>
-                                    {(request.sender_username || 'P').charAt(0).toUpperCase()}
-                                  </Text>
-                                )}
-                              </View>
-
-                              {/* Details */}
-                              <View style={styles.requestInfoCol}>
-                                <Text style={styles.requestNameText}>
-                                  {request.sender_username}
-                                </Text>
-                                <Text style={styles.requestSubText}>
-                                  Sent {new Date(request.created_at).toLocaleDateString()}
-                                </Text>
-                              </View>
-
-                              {/* Actions */}
-                              <View style={styles.requestActionsRow}>
-                                <TouchableOpacity
-                                  style={styles.declineBtn}
-                                  disabled={isProcessing}
-                                  onPress={() => handleDeclineRequest(request.id)}
-                                >
-                                  <Text style={styles.declineBtnText}>✕</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                  style={styles.acceptBtn}
-                                  disabled={isProcessing}
-                                  onPress={() => handleAcceptRequest(request)}
-                                >
-                                  {isProcessing ? (
-                                    <ActivityIndicator size="small" color="#ffffff" />
-                                  ) : (
-                                    <Text style={styles.acceptBtnText}>ACCEPT</Text>
-                                  )}
-                                </TouchableOpacity>
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    </ScrollView>
-                  )}
-
+      {/* 3. PENDING REQUESTS MODAL */}
+      <Modal
+        visible={isRequestsModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsRequestsModalOpen(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setIsRequestsModalOpen(false)}>
+          <View style={styles.modalBackdrop}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalCard}>
+                <View style={styles.modalHeaderRow}>
+                  <Text style={styles.modalTitle}>FRIEND REQUESTS</Text>
                   <TouchableOpacity
-                    style={styles.modalDoneBtn}
+                    style={styles.modalCloseBtn}
                     onPress={() => setIsRequestsModalOpen(false)}
                   >
-                    <Text style={styles.modalDoneBtnText}>DONE</Text>
+                    <Text style={styles.modalCloseBtnText}>✕</Text>
                   </TouchableOpacity>
                 </View>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </Modal>
-      </KeyboardAvoidingView>
+
+                <Text style={styles.modalSub}>
+                  Review incoming friend invites from players.
+                </Text>
+
+                {pendingRequests.length === 0 ? (
+                  <View style={styles.emptyRequestsBox}>
+                    <Text style={styles.emptyRequestsEmoji}>📬</Text>
+                    <Text style={styles.emptyRequestsTitle}>NO PENDING REQUESTS</Text>
+                    <Text style={styles.emptyRequestsSub}>
+                      When someone invites you, their request will appear here.
+                    </Text>
+                  </View>
+                ) : (
+                  <ScrollView
+                    style={styles.requestsScrollView}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <View style={styles.requestsList}>
+                      {pendingRequests.map((req) => {
+                        const avatarImg =
+                          req.sender_avatar && CHARACTER_IMAGES[req.sender_avatar as RoleId];
+                        const initial = (req.sender_username || 'P').charAt(0).toUpperCase();
+                        const isProcessing = processingRequestId === req.id;
+
+                        return (
+                          <View key={req.id} style={styles.requestCard}>
+                            <View style={styles.requestAvatarCircle}>
+                              {avatarImg ? (
+                                <Image
+                                  source={avatarImg}
+                                  style={styles.avatarImg}
+                                  resizeMode="cover"
+                                />
+                              ) : (
+                                <Text style={styles.avatarLetter}>{initial}</Text>
+                              )}
+                            </View>
+
+                            <View style={styles.requestInfoCol}>
+                              <Text style={styles.requestNameText}>{req.sender_username}</Text>
+                              <Text style={styles.requestSubText}>Wants to be friends</Text>
+                            </View>
+
+                            <View style={styles.requestActionsRow}>
+                              <TouchableOpacity
+                                style={styles.declineBtn}
+                                disabled={isProcessing}
+                                onPress={() => handleDeclineRequest(req.id)}
+                              >
+                                <Text style={styles.declineBtnText}>✕</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.acceptBtn}
+                                disabled={isProcessing}
+                                onPress={() => handleAcceptRequest(req)}
+                              >
+                                {isProcessing ? (
+                                  <ActivityIndicator size="small" color="#ffffff" />
+                                ) : (
+                                  <Text style={styles.acceptBtnText}>ACCEPT</Text>
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                )}
+
+                <TouchableOpacity
+                  style={styles.modalDoneBtn}
+                  onPress={() => setIsRequestsModalOpen(false)}
+                >
+                  <Text style={styles.modalDoneBtnText}>DONE</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </View>
   );
 }
@@ -777,20 +891,23 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#090d16',
+  },
+  headerWrapper: {
     paddingHorizontal: 16,
+    paddingBottom: 4,
   },
 
   /* Header */
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
   headerEyebrow: {
-    color: '#8e9eb5',
+    color: '#e11d48',
     fontSize: 10.5,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: 1.5,
     marginBottom: 2,
   },
@@ -798,7 +915,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 26,
     fontWeight: '900',
-    letterSpacing: 2,
+    letterSpacing: 1.5,
   },
   requestsBtn: {
     flexDirection: 'row',
@@ -806,38 +923,41 @@ const styles = StyleSheet.create({
     backgroundColor: '#111724',
     borderWidth: 1,
     borderColor: '#1e2638',
-    borderRadius: 12,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 6,
   },
   requestsBtnActive: {
     borderColor: '#e11d48',
-    backgroundColor: 'rgba(225, 29, 72, 0.12)',
+    backgroundColor: 'rgba(225, 29, 72, 0.15)',
   },
   requestsBtnText: {
-    color: '#ffffff',
+    color: '#94a3b8',
     fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
-  badgeCountPill: {
+  requestsBtnTextActive: {
+    color: '#ffffff',
+    fontWeight: '900',
+  },
+  requestsBadge: {
     backgroundColor: '#e11d48',
+    width: 18,
+    height: 18,
     borderRadius: 9,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    minWidth: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  badgeCountText: {
+  requestsBadgeText: {
     color: '#ffffff',
     fontSize: 10,
     fontWeight: '900',
   },
 
   /* Search Bar */
-  searchBarWrapper: {
+  searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#111724',
@@ -846,7 +966,7 @@ const styles = StyleSheet.create({
     borderColor: '#1e2638',
     paddingHorizontal: 12,
     paddingVertical: 2,
-    marginBottom: 14,
+    marginBottom: 8,
   },
   searchIcon: {
     marginRight: 8,
@@ -907,6 +1027,7 @@ const styles = StyleSheet.create({
 
   /* Scroll Content */
   scrollContent: {
+    paddingHorizontal: 16,
     paddingTop: 4,
   },
   sectionBlock: {

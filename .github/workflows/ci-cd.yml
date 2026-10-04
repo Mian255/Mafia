@@ -5,11 +5,15 @@ on:
     branches:
       - main
       - dev
+  pull_request:
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Frontend Quality Checks (Typecheck & Lint)
+  # 1. Frontend Quality Checks (Typecheck, Lint & Tests)
   # ---------------------------------------------------------------------------
   frontend-ci:
     name: Frontend CI (Typecheck & Lint)
@@ -28,18 +32,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: Frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci || npm install
 
       - name: TypeScript Typecheck
         run: npm run typecheck
 
       - name: Lint Check
         run: npm run lint
+
+      - name: Jest Test Suite
+        run: npm test
 
   # ---------------------------------------------------------------------------
   # 2. Supabase Database Migration Deployment
@@ -50,6 +57,7 @@ jobs:
     defaults:
       run:
         working-directory: Backend
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -73,4 +81,4 @@ jobs:
           CLEAN_PROJECT_REF=$(echo "$PROJECT_REF" | tr -d '[:space:]' | sed -e 's/^"//' -e 's/"$//')
           export SUPABASE_DB_PASSWORD=$(echo -n "$SUPABASE_DB_PASSWORD" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
           supabase link --project-ref "$CLEAN_PROJECT_REF"
-          supabase db push
+          supabase db push --include-all
