@@ -2,7 +2,7 @@
 export { default as SplashScreen } from './auth/SplashScreen';
 export { default as LoginScreen } from './auth/LoginScreen';
 export { default as SignUpScreen } from './auth/SignUpScreen';
-export { default as ForgotPasswordScreen } from './auth/ForgotPasswordScreen';
+export { default as ForgotPasswordScreen, type ForgotPasswordStep } from './auth/ForgotPasswordScreen';
 export { default as ProfileSetupScreen } from './auth/ProfileSetupScreen';
 export { default as OnboardingScreen } from './auth/OnboardingScreen';
 

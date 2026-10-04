@@ -8,18 +8,19 @@ export const MIN_PASSWORD_LENGTH = 8;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Returns an error message for the given (already trimmed) email, or null if it looks valid. */
+/** Returns an error message for the given email, or null if it looks valid. */
 export function validateEmail(email: string): string | null {
-  if (!email) return 'Please enter your email address.';
-  if (!EMAIL_PATTERN.test(email)) return 'Please enter a valid email address.';
+  const trimmed = (email || '').trim();
+  if (!trimmed) return 'Please enter your email address.';
+  if (!EMAIL_PATTERN.test(trimmed)) return 'Please enter a valid email address.';
   return null;
 }
 
 /** Returns an error message for a new password, or null if it meets the policy. */
 export function validateNewPassword(password: string): string | null {
-  if (!password) return 'Please enter a password.';
+  if (!password) return 'Please enter a secret passcode.';
   if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+    return `Passcode must be at least ${MIN_PASSWORD_LENGTH} characters.`;
   }
   if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
     return 'Password must include at least one letter and one number.';
@@ -37,7 +38,7 @@ export function getDisplayName(user: User | null | undefined): string {
   if (fromMetadata) return fromMetadata.trim();
   if (user.email) return user.email.split('@')[0];
   if (user.is_anonymous) return `Guest_${user.id.substring(0, 4).toUpperCase()}`;
-  return 'Operative';
+  return 'Agent';
 }
 
 /**
@@ -48,8 +49,7 @@ export const NEW_ACCOUNT_WINDOW_MS = 15_000;
 
 /**
  * True when this sign-in just created the auth user (e.g. Google OAuth on the Login screen for
- * someone who never signed up). Supabase always creates users on first OAuth sign-in, so this is
- * the client-side way to tell "existing account" from "brand-new account" without a schema change.
+ * someone who never signed up).
  */
 export function isBrandNewAccount(user: User): boolean {
   if (!user.created_at || !user.last_sign_in_at) return false;
@@ -106,10 +106,22 @@ export function getFriendlyAuthError(
     return 'Authentication request was not recognized by Google. Please try again or use email.';
   }
 
+  if (/invalid login credentials|invalid_credentials/i.test(rawMessage)) {
+    return 'Incorrect email or passcode. Please try again.';
+  }
+
+  if (/user already registered|user_already_exists|email_exists|already exists/i.test(rawMessage)) {
+    return 'An account with this email already exists. Try logging in instead.';
+  }
+
+  if (/rate limit|too many attempts/i.test(rawMessage)) {
+    return 'Too many attempts. Please wait a few minutes before trying again.';
+  }
+
   if (isAuthError(error)) {
     switch (error.code) {
       case 'invalid_credentials':
-        return "That email and password don't match an account. Check them and try again, or sign up.";
+        return 'Incorrect email or passcode. Please try again.';
       case 'email_not_confirmed':
         return 'Please confirm your email first. Check your inbox for the confirmation link.';
       case 'user_already_exists':
@@ -117,22 +129,20 @@ export function getFriendlyAuthError(
       case 'identity_already_exists':
         return 'An account with this email already exists. Try logging in instead.';
       case 'weak_password':
-        return `Please choose a stronger password (at least ${MIN_PASSWORD_LENGTH} characters).`;
+        return `Please choose a stronger passcode (at least ${MIN_PASSWORD_LENGTH} characters).`;
       case 'same_password':
-        return 'Your new password must be different from your old one.';
+        return 'Your new passcode must be different from your old one.';
       case 'email_address_invalid':
         return 'Please enter a valid email address.';
       case 'over_request_rate_limit':
       case 'over_email_send_rate_limit':
-        return 'Too many attempts. Please wait a minute and try again.';
+        return 'Too many attempts. Please wait a few minutes before trying again.';
       case 'signup_disabled':
       case 'email_provider_disabled':
-        return 'New sign-ups are closed right now. Please try again later.';
+        return 'New registrations are paused right now. Please try again later.';
       case 'provider_disabled':
       case 'oauth_provider_not_supported':
         return "Google sign-in isn't available right now. Please use your email instead.";
-      case 'anonymous_provider_disabled':
-        return "Guest play isn't available right now. Please log in or sign up.";
       case 'user_banned':
         return 'This account has been suspended.';
       case 'session_expired':
@@ -143,14 +153,8 @@ export function getFriendlyAuthError(
       default:
         break;
     }
-    // Legacy: the profile trigger fails on a duplicate username (profiles.username is UNIQUE).
-    if (/database error saving new user/i.test(error.message)) {
-      return "We couldn't create your account right now. Please try again.";
-    }
   }
 
-  // Unmapped errors: never surface raw internal / Postgres text to the user — the mapped-code
-  // branches above cover everything we translate, so anything reaching here gets the generic
-  // fallback. (Network errors are already handled at the top.)
+  // Unmapped errors: return fallback
   return fallback;
 }

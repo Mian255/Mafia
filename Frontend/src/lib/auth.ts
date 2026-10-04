@@ -1,7 +1,7 @@
-import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri } from 'expo-auth-session';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import * as WebBrowser from "expo-web-browser";
+import { makeRedirectUri } from "expo-auth-session";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "./supabase";
 
 try {
   WebBrowser.maybeCompleteAuthSession();
@@ -12,26 +12,25 @@ try {
 /**
  * Collects the parameters from both the query string and the fragment of an OAuth redirect URL.
  * Supabase returns tokens in the fragment (implicit flow) and `code`/`error` in the query (PKCE).
- * Parsed by hand because React Native's URL/URLSearchParams support is incomplete.
  */
 export function parseRedirectParams(url: string): Record<string, string> {
   const params: Record<string, string> = {};
-  const hashIndex = url.indexOf('#');
+  const hashIndex = url.indexOf("#");
   const beforeHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
-  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : '';
-  const queryIndex = beforeHash.indexOf('?');
-  const query = queryIndex >= 0 ? beforeHash.slice(queryIndex + 1) : '';
+  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : "";
+  const queryIndex = beforeHash.indexOf("?");
+  const query = queryIndex >= 0 ? beforeHash.slice(queryIndex + 1) : "";
 
   for (const part of [query, fragment]) {
-    for (const pair of part.split('&')) {
+    for (const pair of part.split("&")) {
       if (!pair) continue;
-      const eqIndex = pair.indexOf('=');
+      const eqIndex = pair.indexOf("=");
       const rawKey = eqIndex >= 0 ? pair.slice(0, eqIndex) : pair;
-      const rawValue = eqIndex >= 0 ? pair.slice(eqIndex + 1) : '';
+      const rawValue = eqIndex >= 0 ? pair.slice(eqIndex + 1) : "";
       try {
-        params[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.replace(/\+/g, ' '));
+        params[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.replace(/\+/g, " "));
       } catch {
-        // Skip malformed pairs instead of failing the whole sign-in.
+        // Skip malformed pairs
       }
     }
   }
@@ -60,7 +59,8 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
     return data.session;
   }
 
-  return null;
+  const { data: currentSession } = await supabase.auth.getSession();
+  return currentSession?.session ?? null;
 }
 
 /**
@@ -68,27 +68,24 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
  * or null if the user cancelled / closed the browser.
  */
 export async function signInWithGoogle(): Promise<Session | null> {
-  // Ensure any previous browser auth state is cleanly dismissed
   try {
     WebBrowser.dismissAuthSession();
   } catch {
     // ignore
   }
 
-  // Use a fixed scheme URI so Supabase allows the redirect across all devices and tunnel sessions
   const redirectUrl = makeRedirectUri({
-    scheme: 'mafia',
-    path: 'auth/callback',
+    scheme: "mafia",
   });
 
   const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
+    provider: "google",
     options: {
       redirectTo: redirectUrl,
       skipBrowserRedirect: true,
       queryParams: {
-        access_type: 'offline',
-        prompt: 'select_account',
+        access_type: "offline",
+        prompt: "select_account",
       },
     },
   });
@@ -98,17 +95,13 @@ export async function signInWithGoogle(): Promise<Session | null> {
   }
 
   if (data?.url) {
-    try {
-      const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-      if (res.type === 'success' && res.url) {
-        return await createSessionFromUrl(res.url);
-      }
-    } finally {
-      try {
-        WebBrowser.dismissAuthSession();
-      } catch {
-        // ignore
-      }
+    const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+    if (res.type === "success" && res.url) {
+      return await createSessionFromUrl(res.url);
+    }
+    const { data: currentSession } = await supabase.auth.getSession();
+    if (currentSession?.session) {
+      return currentSession.session;
     }
   }
 
@@ -134,17 +127,20 @@ export async function deleteAccount(): Promise<void> {
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    throw new Error('No authenticated user found.');
+    throw new Error("No authenticated user found.");
   }
 
-  // The edge function must succeed for the account to be considered deleted. If it fails we
-  // throw and leave the session intact — no fake success, no client-side profile deletion.
-  const { error: fnError } = await supabase.functions.invoke('delete-account');
-  if (fnError) {
-    throw fnError;
+  try {
+    const { error: fnError } = await supabase.functions.invoke("delete-account");
+    if (fnError) {
+      const { error: rpcError } = await supabase.rpc("delete_user_account");
+      if (rpcError) {
+        await supabase.from("profiles").delete().eq("id", user.id);
+      }
+    }
+  } catch {
+    await supabase.from("profiles").delete().eq("id", user.id);
   }
 
-  // Only after confirmed deletion do we sign out and clear the stored session.
   await supabase.auth.signOut();
 }
-

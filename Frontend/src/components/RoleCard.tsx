@@ -43,6 +43,20 @@ export const CHARACTER_IMAGES: Record<RoleId, ImageSourcePropType> = {
   civilian: require('../../assets/characters/civilian.png'),
 };
 
+// Optional prefetch helper to be called on runtime mount (not module evaluation)
+export const prefetchCharacterImages = () => {
+  try {
+    Object.values(CHARACTER_IMAGES).forEach((source) => {
+      const resolved = Image.resolveAssetSource(source);
+      if (resolved?.uri && !resolved.uri.startsWith("http")) {
+        Image.prefetch(resolved.uri).catch(() => {});
+      }
+    });
+  } catch {
+    // Ignore prefetch errors in dev/SSR
+  }
+};
+
 export const ROLES_DATA: Record<RoleId, RoleData> = {
   mafia: {
     id: 'mafia',
