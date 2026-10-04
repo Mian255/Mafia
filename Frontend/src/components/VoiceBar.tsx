@@ -17,26 +17,16 @@ interface VoiceBarProps {
 export default function VoiceBar({ channel, ids, compact = false }: VoiceBarProps) {
   const voice: VoiceRoomState = useVoiceRoom(channel, ids);
 
-  if (voice.status === 'error') {
-    return (
-      <View style={[styles.wrap, compact && styles.compact]}>
-        <Text style={styles.errorText} numberOfLines={1}>
-          🎙️ {voice.error ?? 'Voice unavailable'}
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.wrap, compact && styles.compact]}>
-      {voice.status === 'connecting' || voice.status === 'idle' ? (
+      {voice.status === 'connecting' ? (
         <ActivityIndicator size="small" color="#38bdf8" />
       ) : (
-        <View style={[styles.dot, voice.status === 'connected' ? styles.dotOn : null]} />
+        <View style={[styles.dot, voice.muted ? null : styles.dotOn]} />
       )}
 
       <Text style={styles.label}>
-        {voice.status === 'connected' ? 'VOICE ON' : 'CONNECTING…'}
+        {voice.muted ? 'VOICE OFF' : 'VOICE LIVE'}
       </Text>
 
       {voice.participants.length > 0 && (
@@ -45,17 +35,13 @@ export default function VoiceBar({ channel, ids, compact = false }: VoiceBarProp
         </Text>
       )}
 
-      {voice.canPublish ? (
-        <TouchableOpacity
-          style={[styles.micButton, voice.muted ? styles.micMuted : styles.micLive]}
-          onPress={voice.toggleMute}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Text style={styles.micText}>{voice.muted ? '🔇 MUTED' : '🎤 LIVE'}</Text>
-        </TouchableOpacity>
-      ) : (
-        <Text style={styles.listenOnly}>LISTEN ONLY</Text>
-      )}
+      <TouchableOpacity
+        style={[styles.micButton, voice.muted ? styles.micMuted : styles.micLive]}
+        onPress={voice.toggleMute}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Text style={styles.micText}>{voice.muted ? '🔇 MIC OFF' : '🎤 MIC ON'}</Text>
+      </TouchableOpacity>
     </View>
   );
 }

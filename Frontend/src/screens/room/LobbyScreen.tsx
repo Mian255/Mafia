@@ -5,6 +5,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -217,6 +218,20 @@ export default function LobbyScreen({
 
   useEffect(() => {
     isMountedRef.current = true;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleUnload = () => {
+        void leaveRoom(currentRoom.id, isHostRef.current);
+      };
+      window.addEventListener('beforeunload', handleUnload);
+      return () => {
+        isMountedRef.current = false;
+        window.removeEventListener('beforeunload', handleUnload);
+        if (copiedTimeoutRef.current) {
+          clearTimeout(copiedTimeoutRef.current);
+          copiedTimeoutRef.current = null;
+        }
+      };
+    }
     return () => {
       isMountedRef.current = false;
       if (copiedTimeoutRef.current) {
@@ -224,7 +239,7 @@ export default function LobbyScreen({
         copiedTimeoutRef.current = null;
       }
     };
-  }, []);
+  }, [currentRoom.id]);
 
   // Max allowed mafia for fair game in in-lobby rules editor
   const maxAllowedMafiaInRules = useMemo(() => {
