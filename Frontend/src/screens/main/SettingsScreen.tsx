@@ -19,6 +19,7 @@ import { supabase } from '../../lib/supabase';
 import { deleteAccount } from '../../lib/auth';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 import { SnapchatPullRefreshScreen } from '../../components/refresh';
+import { useAudioSettings } from '../../lib/audioSettings';
 
 interface SettingsScreenProps {
   userAlias?: string;
@@ -75,10 +76,8 @@ export default function SettingsScreen({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPasswordSection, setShowPasswordSection] = useState(false);
 
-  // Audio / FX Toggles
-  const [soundEffects, setSoundEffects] = useState(true);
-  const [bgMusic, setBgMusic] = useState(true);
-  const [vibrations, setVibrations] = useState(true);
+  // Audio / FX Toggles (single source of truth, persisted via AsyncStorage)
+  const audio = useAudioSettings();
 
   // Load User Data from Supabase
   const fetchUserProfile = useCallback(async () => {
@@ -572,13 +571,13 @@ export default function SettingsScreen({
                 <View style={styles.settingRow}>
                   <View>
                     <Text style={styles.settingLabel}>Sound Effects</Text>
-                    <Text style={styles.settingSub}>Card flips, voting bells, action cues</Text>
+                    <Text style={styles.settingSub}>Menu taps, card flips, voting bells</Text>
                   </View>
                   <Switch
-                    value={soundEffects}
-                    onValueChange={setSoundEffects}
+                    value={audio.soundEffects}
+                    onValueChange={(value) => audio.setSoundEffects(value)}
                     trackColor={{ false: '#1e2638', true: '#e11d48' }}
-                    thumbColor={soundEffects ? '#ffffff' : '#94a3b8'}
+                    thumbColor={audio.soundEffects ? '#ffffff' : '#94a3b8'}
                   />
                 </View>
 
@@ -590,10 +589,10 @@ export default function SettingsScreen({
                     <Text style={styles.settingSub}>Suspenseful night & day soundtrack</Text>
                   </View>
                   <Switch
-                    value={bgMusic}
-                    onValueChange={setBgMusic}
+                    value={audio.bgMusic}
+                    onValueChange={(value) => audio.setBgMusic(value)}
                     trackColor={{ false: '#1e2638', true: '#e11d48' }}
-                    thumbColor={bgMusic ? '#ffffff' : '#94a3b8'}
+                    thumbColor={audio.bgMusic ? '#ffffff' : '#94a3b8'}
                   />
                 </View>
 
@@ -605,10 +604,10 @@ export default function SettingsScreen({
                     <Text style={styles.settingSub}>Vibrate on phase timer & role assignment</Text>
                   </View>
                   <Switch
-                    value={vibrations}
-                    onValueChange={setVibrations}
+                    value={audio.vibrations}
+                    onValueChange={(value) => audio.setVibrations(value)}
                     trackColor={{ false: '#1e2638', true: '#e11d48' }}
-                    thumbColor={vibrations ? '#ffffff' : '#94a3b8'}
+                    thumbColor={audio.vibrations ? '#ffffff' : '#94a3b8'}
                   />
                 </View>
               </View>

@@ -14,6 +14,7 @@ import { StatusBar } from "expo-status-bar";
 import Svg, { Path } from "react-native-svg";
 import { supabase } from "../../lib/supabase";
 import { BottomNavBar, NavTab } from "../../components/BottomNavBar";
+import { useClickSound } from "../../hooks/useClickSound";
 import {
   CHARACTER_IMAGES,
   ExpandedRoleModal,
@@ -28,6 +29,7 @@ import SettingsScreen from "./SettingsScreen";
 
 interface HomeScreenProps {
   userAlias?: string;
+  soundEffects?: boolean;
   onLogout?: () => void;
   onCreateRoom?: () => void;
   onJoinRoom?: () => void;
@@ -49,6 +51,7 @@ interface UserProfile {
 
 export default function HomeScreen({
   userAlias = "Player",
+  soundEffects = true,
   onLogout,
   onCreateRoom,
   onJoinRoom,
@@ -245,6 +248,8 @@ export default function HomeScreen({
     onLogout?.();
   };
 
+  const { play } = useClickSound(soundEffects ?? true);
+
   // Helper values
   const winRate =
     stats.games_played > 0
@@ -291,6 +296,7 @@ export default function HomeScreen({
                     <TouchableOpacity
                       style={styles.profileAvatarBtn}
                       activeOpacity={0.8}
+                      onPressIn={() => play()}
                       onPress={() => setIsProfileModalOpen(true)}
                     >
                       {activeAvatarSource ? (
@@ -315,6 +321,7 @@ export default function HomeScreen({
               <TouchableOpacity
                 style={[styles.actionBox, styles.createRoomCard]}
                 activeOpacity={0.85}
+                onPressIn={() => play()}
                 onPress={onCreateRoom}
               >
                 <View style={[styles.actionIconPill, styles.createRoomIconPill]}>
@@ -337,6 +344,7 @@ export default function HomeScreen({
               <TouchableOpacity
                 style={[styles.actionBox, styles.joinRoomCard]}
                 activeOpacity={0.85}
+                onPressIn={() => play()}
                 onPress={onJoinRoom}
               >
                 <View style={[styles.actionIconPill, styles.joinRoomIconPill]}>
@@ -371,21 +379,33 @@ export default function HomeScreen({
               <View style={styles.rolesRow}>
                 <RoleCard
                   role={ROLES_DATA.mafia}
-                  onSelect={handleRolePress}
+                  onSelect={() => {
+                    play();
+                    handleRolePress(ROLES_DATA.mafia);
+                  }}
                 />
                 <RoleCard
                   role={ROLES_DATA.detective}
-                  onSelect={handleRolePress}
+                  onSelect={() => {
+                    play();
+                    handleRolePress(ROLES_DATA.detective);
+                  }}
                 />
               </View>
               <View style={styles.rolesRow}>
                 <RoleCard
                   role={ROLES_DATA.doctor}
-                  onSelect={handleRolePress}
+                  onSelect={() => {
+                    play();
+                    handleRolePress(ROLES_DATA.doctor);
+                  }}
                 />
                 <RoleCard
                   role={ROLES_DATA.civilian}
-                  onSelect={handleRolePress}
+                  onSelect={() => {
+                    play();
+                    handleRolePress(ROLES_DATA.civilian);
+                  }}
                 />
               </View>
             </View>

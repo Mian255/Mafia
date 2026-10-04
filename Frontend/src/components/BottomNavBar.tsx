@@ -2,16 +2,23 @@ import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useClickSound } from "../hooks/useClickSound";
 
 export type NavTab = "play" | "friends" | "settings";
 
 interface BottomNavBarProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
+  soundEnabled?: boolean;
 }
 
-export function BottomNavBar({ activeTab, onSelectTab }: BottomNavBarProps) {
+export function BottomNavBar({
+  activeTab,
+  onSelectTab,
+  soundEnabled = true,
+}: BottomNavBarProps) {
   const insets = useSafeAreaInsets();
+  const { play } = useClickSound(soundEnabled);
   // Ensure we respect bottom gesture navigation bar and home indicators (minimum 12px padding)
   const bottomPadding = Math.max(insets.bottom, 12);
 
@@ -21,6 +28,7 @@ export function BottomNavBar({ activeTab, onSelectTab }: BottomNavBarProps) {
       <TouchableOpacity
         style={styles.navItem}
         activeOpacity={0.7}
+        onPressIn={() => play()}
         onPress={() => onSelectTab("play")}
       >
         <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
@@ -53,6 +61,7 @@ export function BottomNavBar({ activeTab, onSelectTab }: BottomNavBarProps) {
       <TouchableOpacity
         style={styles.navItem}
         activeOpacity={0.7}
+        onPressIn={() => play()}
         onPress={() => onSelectTab("friends")}
       >
         <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
@@ -97,6 +106,7 @@ export function BottomNavBar({ activeTab, onSelectTab }: BottomNavBarProps) {
       <TouchableOpacity
         style={styles.navItem}
         activeOpacity={0.7}
+        onPressIn={() => play()}
         onPress={() => onSelectTab("settings")}
       >
         <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">

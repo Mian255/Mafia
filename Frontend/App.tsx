@@ -18,6 +18,7 @@ import {
   SplashScreen,
 } from './src/screens';
 import { getUsernameStatus, isPlaceholderUsername } from './src/lib/profile';
+import { useAudioSettings } from './src/lib/audioSettings';
 import type { Room } from './src/lib/rooms';
 
 type ScreenState =
@@ -49,6 +50,7 @@ export default function App() {
   const [initialDestination, setInitialDestination] = useState<ScreenState | null>(null);
   const [splashFinished, setSplashFinished] = useState(false);
   const [recoveryStep, setRecoveryStep] = useState<ForgotPasswordStep>('request');
+  const audio = useAudioSettings();
 
   const splashFinishedRef = useRef(false);
   const lastBackPressTimeRef = useRef<number>(0);
@@ -380,6 +382,7 @@ export default function App() {
         {currentScreen === 'home' && (
           <HomeScreen
             userAlias={userAlias}
+            soundEffects={audio.soundEffects}
             onCreateRoom={() => navigate('create-room')}
             onJoinRoom={() => navigate('join-room')}
             onLogout={() => {
