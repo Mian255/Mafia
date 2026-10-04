@@ -11,7 +11,7 @@ import {
 // Prevents Expo Go runtime crash when WebRTC native module is missing.
 let livekitRn: typeof import('@livekit/react-native') | null = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   livekitRn = require('@livekit/react-native');
 } catch {
   livekitRn = null;
@@ -32,7 +32,6 @@ export interface VoiceRoomState {
 
 function useLiveKitRoom(room: Room | null) {
   if (livekitRn?.useRoom && room) {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
     return livekitRn.useRoom(room);
   }
   return { participants: [] };
@@ -49,19 +48,17 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
   const [room] = useState(() => new Room({ adaptiveStream: false, dynacast: false }));
 
   const { participants } = useLiveKitRoom(room);
-  const [status, setStatus] = useState<VoiceRoomState['status']>('idle');
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<VoiceRoomState['status']>(() => (livekitRn ? 'idle' : 'error'));
+  const [error, setError] = useState<string | null>(() =>
+    livekitRn ? null : 'Voice requires a Dev Build (WebRTC unavailable in Expo Go).'
+  );
   const [muted, setMuted] = useState(true);
   const [canPublish, setCanPublish] = useState(false);
   const [speakingIds, setSpeakingIds] = useState<string[]>([]);
 
   // Connect once per channel+identity pair.
   useEffect(() => {
-    if (!livekitRn) {
-      setStatus('error');
-      setError('Voice requires a Dev Build (WebRTC unavailable in Expo Go).');
-      return;
-    }
+    if (!livekitRn) return;
 
     let cancelled = false;
 

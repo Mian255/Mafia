@@ -202,7 +202,7 @@ export default function FriendsScreen() {
         setRefreshing(false);
       }
     }
-  }, [showToast]);
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

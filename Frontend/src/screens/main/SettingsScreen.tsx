@@ -175,7 +175,7 @@ export default function SettingsScreen({
   // Initial load of user & profile data.
   useEffect(() => {
     mountedRef.current = true;
-    setIsLoading(true);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchProfile().finally(() => {
       if (mountedRef.current) setIsLoading(false);
     });
@@ -456,21 +456,6 @@ export default function SettingsScreen({
       showToast(msg, 'error');
     } finally {
       setIsUpdatingPassword(false);
-    }
-  };
-
-  // Account Deletion Handler
-  const handleDeleteAccountConfirm = async () => {
-    setIsDeletingAccount(true);
-    try {
-      await deleteAccount();
-      setIsDeleteAccountModalOpen(false);
-      if (onLogout) onLogout();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to delete account';
-      showToast(msg, 'error');
-      setIsDeletingAccount(false);
-      setIsDeleteAccountModalOpen(false);
     }
   };
 

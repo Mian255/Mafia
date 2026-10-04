@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   BackHandler,
   Image,
-  type ImageSourcePropType,
   Modal,
   StyleSheet,
   Text,
@@ -47,27 +46,6 @@ interface UserStats {
 interface UserProfile {
   username: string;
   avatar_url: string | null;
-}
-
-type AvatarSource =
-  | { type: "uri"; uri: string }
-  | { type: "local"; source: ImageSourcePropType }
-  | null;
-
-/**
- * Fix 5: `avatar_url` can be a real uploaded URL, a RoleId used as a local character
- * image key, or empty/unknown. Map it to a renderable image source, or null to fall
- * back to the initial letter. Keeps the existing role-avatar behavior working.
- */
-function resolveAvatarSource(avatarUrl: string | null | undefined): AvatarSource {
-  if (!avatarUrl) return null;
-  if (avatarUrl.startsWith("http")) {
-    return { type: "uri", uri: avatarUrl };
-  }
-  if (avatarUrl in CHARACTER_IMAGES) {
-    return { type: "local", source: CHARACTER_IMAGES[avatarUrl as RoleId] };
-  }
-  return null;
 }
 
 export default function HomeScreen({
@@ -118,49 +96,6 @@ export default function HomeScreen({
   });
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  // Fix 3: error state, kept distinct from the loading spinner and from the empty
-  // (new-user zero) state so each can render its own affordance.
-  const [error, setError] = useState(false);
-  // Bumping this re-runs the load effect (used by the retry affordance below), which
-  // also tears down and re-establishes the realtime subscriptions.
-  const [reloadKey, setReloadKey] = useState(0);
-
-  // Fix 4: single source of truth for the profile+stats fetch/mapping, shared by the
-  // initial load effect and pull-to-refresh so the two can never drift apart.
-  const fetchUserData = useCallback(async (userId: string) => {
-    const [{ data: profileData }, { data: statsData }] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("username, avatar_url")
-        .eq("id", userId)
-        .maybeSingle(),
-      supabase
-        .from("user_stats")
-        .select("games_played, games_won, mafia_wins, civilian_wins, doctor_wins, detective_wins")
-        .eq("user_id", userId)
-        .maybeSingle(),
-    ]);
-
-    const mappedProfile: UserProfile | null = profileData
-      ? {
-          username: (profileData as UserProfile).username,
-          avatar_url: (profileData as UserProfile).avatar_url,
-        }
-      : null;
-
-    const mappedStats: UserStats | null = statsData
-      ? {
-          games_played: (statsData as UserStats).games_played ?? 0,
-          games_won: (statsData as UserStats).games_won ?? 0,
-          mafia_wins: (statsData as UserStats).mafia_wins ?? 0,
-          civilian_wins: (statsData as UserStats).civilian_wins ?? 0,
-          doctor_wins: (statsData as UserStats).doctor_wins ?? 0,
-          detective_wins: (statsData as UserStats).detective_wins ?? 0,
-        }
-      : null;
-
-    return { profile: mappedProfile, stats: mappedStats };
-  }, []);
 
   const loadUserData = useCallback(async () => {
     try {
