@@ -8,7 +8,7 @@ import { colors, fontSize, spacing } from '../../theme/tokens';
  * Day discussion. Living players debate in the `day` chat channel while a strip
  * of surviving seats stays visible. Voting follows when the timer expires.
  */
-export default function DayDiscussionScreen({ state, currentUserId }: PhaseScreenProps) {
+export default function DayDiscussionScreen({ state, currentUserId, narratorMessage }: PhaseScreenProps) {
   const { game, players, messages, sendChat, activeChannel, timeRemaining } = state;
   const living = players.filter((p) => p.is_alive);
 
@@ -18,6 +18,7 @@ export default function DayDiscussionScreen({ state, currentUserId }: PhaseScree
       round={game?.round_number}
       timeRemaining={timeRemaining}
       accent={colors.civilian}
+      narratorMessage={narratorMessage}
     >
       <View style={styles.rosterWrap}>
         <Text style={styles.rosterLabel}>{living.length} ALIVE</Text>

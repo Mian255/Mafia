@@ -9,7 +9,7 @@ import type { GameRole } from '../../types/database';
  * phase (vote outcome). Reads the matching latest event banner from state and
  * shows who — if anyone — was lost, plus their role when revealed.
  */
-export default function DawnScreen({ state }: PhaseScreenProps) {
+export default function DawnScreen({ state, narratorMessage }: PhaseScreenProps) {
   const { game, players, latestNightResult, latestVoteResult, timeRemaining } = state;
   const isVote = game?.phase === 'result';
 
@@ -45,7 +45,7 @@ export default function DawnScreen({ state }: PhaseScreenProps) {
   }
 
   return (
-    <GameShell phaseLabel={phaseLabel} round={game?.round_number} timeRemaining={timeRemaining} accent={accent}>
+    <GameShell phaseLabel={phaseLabel} round={game?.round_number} timeRemaining={timeRemaining} accent={accent} narratorMessage={narratorMessage}>
       <View style={styles.content}>
         {victim ? (
           <View style={styles.victimWrap}>

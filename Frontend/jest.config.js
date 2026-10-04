@@ -9,6 +9,7 @@ module.exports = {
       'ts-jest',
       {
         tsconfig: {
+          rootDir: '.',
           jsx: 'react-jsx',
           types: ['jest', 'node'],
         },

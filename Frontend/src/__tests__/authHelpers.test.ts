@@ -41,7 +41,7 @@ describe('Auth Helpers & Validation Module', () => {
 
     it('accepts valid passwords', () => {
       expect(validateNewPassword('secret123')).toBeNull();
-      expect(validateNewPassword('longpasscode!@#')).toBeNull();
+      expect(validateNewPassword('longpasscode123!@#')).toBeNull();
     });
   });
 
