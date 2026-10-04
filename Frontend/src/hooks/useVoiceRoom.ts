@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Room, RoomEvent, type Participant } from 'livekit-client';
-import { AudioSession, useRoom } from '@livekit/react-native';
 import {
   requestVoiceToken,
   stopAudioSession,
   type VoiceChannel,
   type VoiceIdentity,
 } from '../lib/voice';
+
+// Safely load @livekit/react-native if native WebRTC module exists (Development Build).
+// Prevents Expo Go runtime crash when WebRTC native module is missing.
+let livekitRn: typeof import('@livekit/react-native') | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  livekitRn = require('@livekit/react-native');
+} catch {
+  livekitRn = null;
+}
 
 export interface VoiceRoomState {
   status: 'idle' | 'connecting' | 'connected' | 'error';
@@ -21,6 +30,14 @@ export interface VoiceRoomState {
   leave: () => Promise<void>;
 }
 
+function useLiveKitRoom(room: Room | null) {
+  if (livekitRn?.useRoom && room) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return livekitRn.useRoom(room);
+  }
+  return { participants: [] };
+}
+
 /**
  * Joins a LiveKit voice room for the given channel. Lifecycle: start the
  * platform audio session, fetch a token from the `voice-token` edge function,
@@ -31,7 +48,7 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
   // One Room instance per hook lifetime (useState initializer never re-runs).
   const [room] = useState(() => new Room({ adaptiveStream: false, dynacast: false }));
 
-  const { participants } = useRoom(room);
+  const { participants } = useLiveKitRoom(room);
   const [status, setStatus] = useState<VoiceRoomState['status']>('idle');
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(true);
@@ -40,12 +57,20 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
 
   // Connect once per channel+identity pair.
   useEffect(() => {
+    if (!livekitRn) {
+      setStatus('error');
+      setError('Voice requires a Dev Build (WebRTC unavailable in Expo Go).');
+      return;
+    }
+
     let cancelled = false;
 
     (async () => {
       try {
         setStatus('connecting');
-        await AudioSession.startAudioSession();
+        if (livekitRn?.AudioSession) {
+          await livekitRn.AudioSession.startAudioSession();
+        }
         const res = await requestVoiceToken(channel, ids);
         if (cancelled) return;
         setCanPublish(res.can_publish);
