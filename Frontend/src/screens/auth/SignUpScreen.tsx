@@ -19,7 +19,7 @@ import {
   validateEmail,
   validateNewPassword,
 } from '../../lib/authHelpers';
-import { validateUsername } from '../../lib/profile';
+import { saveUsername, validateUsername } from '../../lib/profile';
 import { rateLimiter } from '../../lib/rateLimit';
 import {
   AuthCard,
@@ -174,39 +174,24 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
       });
 
       if (error) {
-        rateLimiter.recordAttempt('signup', trimmedEmail);
-        setFormError(
-          getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
-        );
-      } else if (data.session?.user) {
-        // Save profile record in Supabase profiles table
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.session.user.id,
-            email: trimmedEmail,
-            username: trimmedUsername,
-            updated_at: new Date().toISOString(),
-          } as never);
-        } catch {
-          // ignore
+        if (/database error saving new user/i.test(error.message ?? '')) {
+          setFieldErrors({ username: 'This codename is already taken. Choose another.' });
+        } else {
+          rateLimiter.recordAttempt('signup', trimmedEmail);
+          setFormError(
+            getFriendlyAuthError(error, "We couldn't create your account. Please try again.")
+          );
         }
-
+      } else if (data.session?.user) {
+        const authedUser = data.session.user;
+        try {
+          await saveUsername(authedUser, trimmedUsername);
+        } catch {}
         rateLimiter.reset('signup', trimmedEmail);
-        await onSignUpSuccess?.(data.session.user);
+        await onSignUpSuccess?.(authedUser);
       } else if (data.user && data.user.identities?.length === 0) {
         setFormError('An account with this email already exists. Try logging in instead.');
       } else if (data.user) {
-        // Record profile entry for email confirmation flow
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            email: trimmedEmail,
-            username: trimmedUsername,
-            updated_at: new Date().toISOString(),
-          } as never);
-        } catch {
-          // ignore
-        }
         rateLimiter.reset('signup', trimmedEmail);
         setConfirmationSentTo(trimmedEmail);
       }

@@ -10,7 +10,6 @@ export { default as OnboardingScreen } from './auth/OnboardingScreen';
 export { default as HomeScreen } from './main/HomeScreen';
 export { default as FriendsScreen } from './main/FriendsScreen';
 export { default as SettingsScreen } from './main/SettingsScreen';
-export { default as ProfileScreen } from './main/ProfileScreen';
 
 // Room Screens
 export { default as CreateRoomScreen } from './room/CreateRoomScreen';
@@ -19,6 +18,7 @@ export { default as LobbyScreen } from './room/LobbyScreen';
 export { default as RoomSettingsScreen } from './room/RoomSettingsScreen';
 
 // Game Screens
+export { default as GameScreen } from './game/GameScreen';
 export { default as RoleRevealScreen } from './game/RoleRevealScreen';
 export { default as NightScreen } from './game/NightScreen';
 export { default as DawnScreen } from './game/DawnScreen';

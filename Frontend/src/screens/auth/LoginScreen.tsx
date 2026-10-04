@@ -95,59 +95,64 @@ export default function LoginScreen({
     [showPassword, togglePasswordVisibility]
   );
 
-  const validate = (): FieldErrors => {
-    const errors: FieldErrors = {};
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      errors.email = 'Enter your email address.';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      errors.email = 'Enter a valid email address.';
-    }
-
-    if (!password) {
-      errors.password = 'Enter your secret passcode.';
-    }
-    return errors;
-  };
-
   const handleLogin = useStableCallback(async () => {
     if (requestInFlight.current) return;
 
-    const trimmedEmail = email.trim().toLowerCase();
-
-    // Rate limiting check
-    const limitCheck = rateLimiter.checkLimit('login', trimmedEmail || 'anonymous');
-    if (!limitCheck.allowed) {
-      setFormError(limitCheck.message || 'Too many attempts. Please try again later.');
+    const trimmedInput = email.trim();
+    if (!trimmedInput) {
+      setFieldErrors({ email: 'Enter your email address or username.' });
       return;
     }
 
-    const errors = validate();
-    setFieldErrors(errors);
-    setFormError('');
-    setNoAccountFound(false);
-    if (Object.values(errors).some(Boolean)) return;
+    if (!password) {
+      setFieldErrors({ password: 'Enter your secret passcode.' });
+      return;
+    }
 
     requestInFlight.current = true;
     setLoading(true);
+    setFormError('');
+    setNoAccountFound(false);
+
+    let loginEmail = trimmedInput.toLowerCase();
+
+    if (!trimmedInput.includes('@')) {
+      try {
+        const rpc = supabase.rpc as unknown as (
+          fn: string,
+          args: Record<string, unknown>
+        ) => Promise<{ data: string | null; error: { message?: string } | null }>;
+        const { data: resolvedEmail, error: lookupError } = await rpc('get_email_for_username', {
+          p_username: trimmedInput,
+        });
+
+        if (lookupError || !resolvedEmail) {
+          setFormError("We couldn't find an account with that username. Please check and try again.");
+          setLoading(false);
+          requestInFlight.current = false;
+          return;
+        }
+        loginEmail = resolvedEmail;
+      } catch {
+        // Fall back to loginEmail as typed
+      }
+    }
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
+        email: loginEmail,
         password,
       });
 
       if (error) {
-        // Record failed attempt
-        const record = rateLimiter.recordAttempt('login', trimmedEmail);
+        const record = rateLimiter.recordAttempt('login', loginEmail);
         if (!record.allowed && record.message) {
           setFormError(record.message);
         } else {
           setFormError(getFriendlyAuthError(error, 'Incorrect email or passcode.'));
         }
       } else if (data.session?.user) {
-        // Reset rate limiter on success
-        rateLimiter.reset('login', trimmedEmail);
+        rateLimiter.reset('login', loginEmail);
         await onLoginSuccess?.(data.session.user);
       }
     } catch {
@@ -226,11 +231,11 @@ export default function LoginScreen({
 
             <AuthCard>
               <AuthTextInput
-                label="EMAIL ADDRESS"
+                label="EMAIL OR USERNAME"
                 variant="gold"
                 error={fieldErrors.email}
                 renderIcon={renderEmailIcon}
-                placeholder="agent@domain.com"
+                placeholder="agent@domain.com or username"
                 value={email}
                 onChangeText={handleEmailChange}
                 keyboardType="email-address"
@@ -263,7 +268,6 @@ export default function LoginScreen({
                 editable={!busy}
               />
 
-              {/* No account with Google alert */}
               {noAccountFound ? (
                 <View style={styles.noAccountBox}>
                   <Text style={styles.noAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
@@ -281,7 +285,6 @@ export default function LoginScreen({
                 </View>
               ) : null}
 
-              {/* Error banner */}
               <AuthErrorBanner message={formError} />
 
               {/* Primary Login Button */}
@@ -307,6 +310,7 @@ export default function LoginScreen({
               disabled={busy}
               activeOpacity={0.7}
               style={styles.forgotTouch}
+              accessibilityRole="button"
             >
               <Text style={styles.forgotText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                 Forgot Password?
@@ -317,7 +321,12 @@ export default function LoginScreen({
               <Text style={styles.needAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                 Need an account?
               </Text>
-              <TouchableOpacity onPress={onNavigateToSignUp} disabled={busy} activeOpacity={0.7}>
+              <TouchableOpacity
+                onPress={onNavigateToSignUp}
+                disabled={busy}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
                 <Text style={styles.signUpText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                   SIGN UP
                 </Text>
@@ -348,6 +357,32 @@ const styles = StyleSheet.create({
     maxWidth: 480,
     alignItems: 'center',
     marginVertical: 2,
+  },
+
+  /* Characters Standing Stage */
+  charactersStage: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginBottom: -1,
+    zIndex: 10,
+  },
+
+  /* Form Card & Inputs */
+  formCard: {
+    width: '100%',
+    backgroundColor: 'rgba(11, 18, 32, 0.94)',
+    borderRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    paddingBottom: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(253, 230, 138, 0.28)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.85,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
   },
   noAccountBox: {
     backgroundColor: 'rgba(153, 27, 27, 0.18)',

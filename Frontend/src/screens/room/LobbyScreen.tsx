@@ -1,8 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Clipboard,
   FlatList,
   Image,
   Modal,
@@ -14,9 +13,11 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { supabase } from '../../lib/supabase';
+import VoiceBar from '../../components/VoiceBar';
 import {
   addBotToRoom,
   fetchLobbyPlayers,
@@ -30,6 +31,7 @@ import {
   updateRoomSettings,
 } from '../../lib/rooms';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
+import { startGame } from '../../lib/games';
 import { useStableCallback } from '../../hooks/useStableCallback';
 import type { LobbyFriendItem, LobbyPlayer, Room, RoomSettings } from '../../lib/rooms';
 
@@ -56,6 +58,107 @@ const BOT_NAMES = [
 ];
 
 const BOT_AVATARS: RoleId[] = ['mafia', 'detective', 'doctor', 'civilian'];
+
+interface PlayerRowProps {
+  item: LobbyPlayer;
+  isMe: boolean;
+  isHost: boolean;
+  onManage: (player: LobbyPlayer) => void;
+}
+
+// Memoized so individual rows skip re-render when the lobby re-renders for
+// unrelated state (copied toggle, modal open/close, ready spinner, etc.).
+const PlayerRow = React.memo(function PlayerRow({
+  item,
+  isMe,
+  isHost,
+  onManage,
+}: PlayerRowProps) {
+  const avatarKey = (item.avatar_url as RoleId) || 'civilian';
+  const hasImage = avatarKey && CHARACTER_IMAGES[avatarKey];
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.playerCard,
+        isMe && styles.playerCardMe,
+        item.is_bot && styles.playerCardBot,
+      ]}
+      onPress={() => {
+        if (isHost && !isMe) {
+          onManage(item);
+        }
+      }}
+      activeOpacity={isHost && !isMe ? 0.7 : 1}
+    >
+      {/* Avatar */}
+      <View style={styles.avatarContainer}>
+        {hasImage ? (
+          <Image
+            source={CHARACTER_IMAGES[avatarKey]}
+            style={styles.avatarImg}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.avatarFallback}>
+            <Text style={styles.avatarInitial}>
+              {(item.username || 'P').charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
+        {item.is_host ? (
+          <View style={styles.crownBadge}>
+            <Text style={styles.crownText}>👑</Text>
+          </View>
+        ) : null}
+        {item.is_bot ? (
+          <View style={styles.botBadge}>
+            <Text style={styles.botBadgeText}>🤖</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Info */}
+      <View style={styles.playerInfo}>
+        <View style={styles.playerNameRow}>
+          <Text style={styles.playerName} numberOfLines={1}>
+            {item.username}
+          </Text>
+          {isMe ? <Text style={styles.youTag}>YOU</Text> : null}
+          {item.is_bot ? <Text style={styles.botTag}>BOT</Text> : null}
+        </View>
+        <Text style={styles.playerRoleText}>
+          {item.is_host ? 'Host' : item.is_bot ? 'AI Player' : 'Player'}
+        </Text>
+      </View>
+
+      {/* Host action hint / Ready badge */}
+      {isHost && !isMe ? (
+        <View style={styles.managePill}>
+          <Text style={styles.managePillText}>
+            {item.is_bot ? 'REMOVE ✕' : 'MANAGE ▾'}
+          </Text>
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.readyBadge,
+            item.is_ready ? styles.readyBadgeActive : styles.readyBadgeWaiting,
+          ]}
+        >
+          <Text
+            style={[
+              styles.readyText,
+              item.is_ready ? styles.readyTextActive : styles.readyTextWaiting,
+            ]}
+          >
+            {item.is_ready ? 'READY' : 'WAITING'}
+          </Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+});
 
 export default function LobbyScreen({
   room,
@@ -96,6 +199,33 @@ export default function LobbyScreen({
   const currentPlayer = players.find((p) => p.user_id === currentUserId);
   const isReady = currentPlayer?.is_ready ?? false;
 
+  // Refs so the realtime effect can stay subscribed once per room without
+  // re-subscribing on prop/host/modal changes, and to guard async setState.
+  const onLeaveRef = useRef(onLeave);
+  const onStartGameRef = useRef(onStartGame);
+  const isHostRef = useRef(isHost);
+  const isRulesModalOpenRef = useRef(isRulesModalOpen);
+  const isMountedRef = useRef(true);
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    onLeaveRef.current = onLeave;
+    onStartGameRef.current = onStartGame;
+    isHostRef.current = isHost;
+    isRulesModalOpenRef.current = isRulesModalOpen;
+  });
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (copiedTimeoutRef.current) {
+        clearTimeout(copiedTimeoutRef.current);
+        copiedTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   // Max allowed mafia for fair game in in-lobby rules editor
   const maxAllowedMafiaInRules = useMemo(() => {
     const specialRoles = (editDoctorEnabled ? 1 : 0) + (editDetectiveEnabled ? 1 : 0);
@@ -116,6 +246,18 @@ export default function LobbyScreen({
         (editDetectiveEnabled ? 1 : 0)
     );
   }, [currentRoom.max_players, effectiveEditMafiaCount, editDoctorEnabled, editDetectiveEnabled]);
+
+  // Clamp the raw mafia count into state when the allowed maximum shrinks
+  // (e.g. after toggling a role) so the stepper does not appear stuck.
+  useEffect(() => {
+    // Intentional: clamp the user-editable mafia count back into range when the
+    // allowed maximum shrinks (e.g. after toggling a role) so the stepper isn't stuck.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEditMafiaCount((prev) => {
+      const clamped = Math.min(Math.max(1, prev), maxAllowedMafiaInRules);
+      return clamped === prev ? prev : clamped;
+    });
+  }, [maxAllowedMafiaInRules]);
 
   useEffect(() => {
     let isMounted = true;
@@ -158,12 +300,13 @@ export default function LobbyScreen({
         },
         async () => {
           const roster = await fetchLobbyPlayers(currentRoom.id);
+          if (!isMounted) return;
           setPlayers(roster);
           // Check if current user was kicked (only for human players)
           const stillInRoom = roster.some((p) => p.user_id === currentUserId);
-          if (!stillInRoom && !isHost) {
+          if (!stillInRoom && !isHostRef.current) {
             Alert.alert('Removed from Room', 'You were removed from the room by the host.');
-            onLeave();
+            onLeaveRef.current();
           }
         }
       )
@@ -184,10 +327,10 @@ export default function LobbyScreen({
           const updated = payload.new as Room;
           setCurrentRoom(updated);
           if (updated.status === 'in_progress') {
-            onStartGame?.(updated.id);
+            onStartGameRef.current?.(updated.id);
           } else if (updated.status === 'abandoned') {
             Alert.alert('Room Closed', 'The host has disbanded this room.');
-            onLeave();
+            onLeaveRef.current();
           }
         }
       )
@@ -208,11 +351,15 @@ export default function LobbyScreen({
           if (payload.new) {
             const updated = payload.new as RoomSettings;
             setSettings(updated);
-            setEditMafiaCount(updated.mafia_count);
-            setEditDoctorEnabled(updated.doctor_enabled);
-            setEditDetectiveEnabled(updated.detective_enabled);
-            setEditNightDuration(updated.night_duration_seconds);
-            setEditDayDuration(updated.discussion_duration_seconds);
+            // Do not clobber in-progress rule edits while the host has the
+            // rules modal open — only sync the display state above.
+            if (!isRulesModalOpenRef.current) {
+              setEditMafiaCount(updated.mafia_count);
+              setEditDoctorEnabled(updated.doctor_enabled);
+              setEditDetectiveEnabled(updated.detective_enabled);
+              setEditNightDuration(updated.night_duration_seconds);
+              setEditDayDuration(updated.discussion_duration_seconds);
+            }
           }
         }
       )
@@ -224,12 +371,34 @@ export default function LobbyScreen({
       supabase.removeChannel(roomChannel);
       supabase.removeChannel(settingsChannel);
     };
-  }, [currentRoom.id, currentUserId, isHost, onLeave, onStartGame]);
+  }, [currentRoom.id, currentUserId]);
 
-  const handleCopyCode = useCallback(() => {
-    Clipboard.setString(currentRoom.code);
+  // If the currently managed player leaves or is kicked (via realtime), close
+  // the manage modal so we do not act on a departed row.
+  useEffect(() => {
+    if (selectedPlayer && !players.some((p) => p.id === selectedPlayer.id)) {
+      // Intentional: close the manage modal when its target player has left/been kicked.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedPlayer(null);
+    }
+  }, [players, selectedPlayer]);
+
+  // Reset the "copied invite" markers whenever the invite modal opens/closes or
+  // the room changes, so the copied state is not sticky across sessions.
+  useEffect(() => {
+    // Intentional: reset the "copied" set when the invite modal opens/closes or the room changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInvitedFriends(new Set());
+  }, [isInviteModalOpen, currentRoom.id]);
+
+  const handleCopyCode = useCallback(async () => {
+    await Clipboard.setStringAsync(currentRoom.code);
+    if (!isMountedRef.current) return;
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
+    copiedTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) setCopied(false);
+    }, 2000);
   }, [currentRoom.code]);
 
   const handleOpenInviteModal = useStableCallback(async () => {
@@ -245,9 +414,9 @@ export default function LobbyScreen({
     }
   });
 
-  const handleInviteFriend = useStableCallback((friend: LobbyFriendItem) => {
+  const handleInviteFriend = useStableCallback(async (friend: LobbyFriendItem) => {
     const inviteMessage = `Join my Mafia game room! Room Code: ${currentRoom.code}`;
-    Clipboard.setString(inviteMessage);
+    await Clipboard.setStringAsync(inviteMessage);
     setInvitedFriends((prev) => new Set(prev).add(friend.id));
     Alert.alert(
       'Invite Copied',
@@ -255,9 +424,9 @@ export default function LobbyScreen({
     );
   });
 
-  const handleShareGeneral = useCallback(() => {
+  const handleShareGeneral = useCallback(async () => {
     const inviteMessage = `Join my Mafia room! Enter Code: ${currentRoom.code}`;
-    Clipboard.setString(inviteMessage);
+    await Clipboard.setStringAsync(inviteMessage);
     Alert.alert('Room Code Copied', `"${currentRoom.code}" copied to clipboard.`);
   }, [currentRoom.code]);
 
@@ -280,11 +449,14 @@ export default function LobbyScreen({
 
       await addBotToRoom(currentRoom.id, availableName, randomAvatar);
       const roster = await fetchLobbyPlayers(currentRoom.id);
+      if (!isMountedRef.current) return;
       setPlayers(roster);
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add bot.');
+      if (isMountedRef.current) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add bot.');
+      }
     } finally {
-      setIsAddingBot(false);
+      if (isMountedRef.current) setIsAddingBot(false);
     }
   });
 
@@ -305,11 +477,14 @@ export default function LobbyScreen({
         await addBotToRoom(currentRoom.id, availableName, randomAvatar);
       }
       const updated = await fetchLobbyPlayers(currentRoom.id);
+      if (!isMountedRef.current) return;
       setPlayers(updated);
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add bots.');
+      if (isMountedRef.current) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add bots.');
+      }
     } finally {
-      setIsAddingBot(false);
+      if (isMountedRef.current) setIsAddingBot(false);
     }
   });
 
@@ -319,13 +494,14 @@ export default function LobbyScreen({
     try {
       const nextReady = !isReady;
       await setPlayerReady(currentRoom.id, nextReady);
+      if (!isMountedRef.current) return;
       setPlayers((prev) =>
         prev.map((p) => (p.user_id === currentUserId ? { ...p, is_ready: nextReady } : p))
       );
     } catch {
       // ignore
     } finally {
-      setIsReadying(false);
+      if (isMountedRef.current) setIsReadying(false);
     }
   });
 
@@ -346,6 +522,7 @@ export default function LobbyScreen({
     }
     try {
       await transferHost(currentRoom.id, currentUserId, target.user_id);
+      if (!isMountedRef.current) return;
       setSelectedPlayer(null);
       setCurrentRoom((prev) => ({ ...prev, host_id: target.user_id! }));
       setPlayers((prev) =>
@@ -356,7 +533,9 @@ export default function LobbyScreen({
       );
       Alert.alert('Host Changed', `${target.username} is now the host.`);
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to transfer host.');
+      if (isMountedRef.current) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to transfer host.');
+      }
     }
   });
 
@@ -367,10 +546,13 @@ export default function LobbyScreen({
       } else {
         await kickPlayer(currentRoom.id, target.user_id, target.id);
       }
+      if (!isMountedRef.current) return;
       setSelectedPlayer(null);
       setPlayers((prev) => prev.filter((p) => p.id !== target.id));
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to remove player.');
+      if (isMountedRef.current) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to remove player.');
+      }
     }
   });
 
@@ -385,12 +567,15 @@ export default function LobbyScreen({
         night_duration_seconds: editNightDuration,
         discussion_duration_seconds: editDayDuration,
       });
+      if (!isMountedRef.current) return;
       setSettings(updated);
       setIsRulesModalOpen(false);
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to save rules.');
+      if (isMountedRef.current) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to save rules.');
+      }
     } finally {
-      setIsSavingRules(false);
+      if (isMountedRef.current) setIsSavingRules(false);
     }
   });
 
@@ -410,20 +595,19 @@ export default function LobbyScreen({
 
     setIsStarting(true);
     try {
-      const { error } = await supabase
-        .from('rooms')
-        .update({ status: 'in_progress', updated_at: new Date().toISOString() })
-        .eq('id', currentRoom.id);
-
-      if (error) {
-        Alert.alert('Error', error.message || 'Failed to start game.');
-      } else {
-        onStartGame?.(currentRoom.id);
+      // Atomic server-side start: start_game seats players, assigns roles, and
+      // flips rooms.status='in_progress' under host authorization. The realtime
+      // rooms handler above then fires onStartGame for every client; we also
+      // navigate the host directly here so it feels instant.
+      await startGame(currentRoom.id);
+      if (!isMountedRef.current) return;
+      onStartGameRef.current?.(currentRoom.id);
+    } catch (err: unknown) {
+      if (isMountedRef.current) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Unable to start game. Please try again.');
       }
-    } catch {
-      Alert.alert('Error', 'Unable to start game. Please try again.');
     } finally {
-      setIsStarting(false);
+      if (isMountedRef.current) setIsStarting(false);
     }
   });
 
@@ -432,93 +616,21 @@ export default function LobbyScreen({
     [isHost, players]
   );
 
-  const renderPlayerItem = ({ item }: { item: LobbyPlayer }) => {
-    const avatarKey = (item.avatar_url as RoleId) || 'civilian';
-    const hasImage = avatarKey && CHARACTER_IMAGES[avatarKey];
-    const isMe = item.user_id === currentUserId;
+  const handleSelectPlayer = useStableCallback((player: LobbyPlayer) => {
+    setSelectedPlayer(player);
+  });
 
-    return (
-      <TouchableOpacity
-        style={[
-          styles.playerCard,
-          isMe && styles.playerCardMe,
-          item.is_bot && styles.playerCardBot,
-        ]}
-        onPress={() => {
-          if (isHost && !isMe) {
-            setSelectedPlayer(item);
-          }
-        }}
-        activeOpacity={isHost && !isMe ? 0.7 : 1}
-      >
-        {/* Avatar */}
-        <View style={styles.avatarContainer}>
-          {hasImage ? (
-            <Image
-              source={CHARACTER_IMAGES[avatarKey]}
-              style={styles.avatarImg}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarInitial}>
-                {(item.username || 'P').charAt(0).toUpperCase()}
-              </Text>
-            </View>
-          )}
-          {item.is_host ? (
-            <View style={styles.crownBadge}>
-              <Text style={styles.crownText}>👑</Text>
-            </View>
-          ) : null}
-          {item.is_bot ? (
-            <View style={styles.botBadge}>
-              <Text style={styles.botBadgeText}>🤖</Text>
-            </View>
-          ) : null}
-        </View>
-
-        {/* Info */}
-        <View style={styles.playerInfo}>
-          <View style={styles.playerNameRow}>
-            <Text style={styles.playerName} numberOfLines={1}>
-              {item.username}
-            </Text>
-            {isMe ? <Text style={styles.youTag}>YOU</Text> : null}
-            {item.is_bot ? <Text style={styles.botTag}>BOT</Text> : null}
-          </View>
-          <Text style={styles.playerRoleText}>
-            {item.is_host ? 'Host' : item.is_bot ? 'AI Player' : 'Player'}
-          </Text>
-        </View>
-
-        {/* Host action hint / Ready badge */}
-        {isHost && !isMe ? (
-          <View style={styles.managePill}>
-            <Text style={styles.managePillText}>
-              {item.is_bot ? 'REMOVE ✕' : 'MANAGE ▾'}
-            </Text>
-          </View>
-        ) : (
-          <View
-            style={[
-              styles.readyBadge,
-              item.is_ready ? styles.readyBadgeActive : styles.readyBadgeWaiting,
-            ]}
-          >
-            <Text
-              style={[
-                styles.readyText,
-                item.is_ready ? styles.readyTextActive : styles.readyTextWaiting,
-              ]}
-            >
-              {item.is_ready ? 'READY' : 'WAITING'}
-            </Text>
-          </View>
-        )}
-      </TouchableOpacity>
-    );
-  };
+  const renderPlayerItem = useCallback(
+    ({ item }: { item: LobbyPlayer }) => (
+      <PlayerRow
+        item={item}
+        isMe={item.user_id === currentUserId}
+        isHost={isHost}
+        onManage={handleSelectPlayer}
+      />
+    ),
+    [currentUserId, isHost, handleSelectPlayer]
+  );
 
   return (
     <View style={styles.container}>
@@ -585,6 +697,11 @@ export default function LobbyScreen({
         ) : (
           <View style={styles.headerRightPlaceholder} />
         )}
+      </View>
+
+      {/* Lobby voice (MAF-072): everyone in the room can chat by voice. */}
+      <View style={styles.voiceWrap}>
+        <VoiceBar channel="lobby" ids={{ roomId: currentRoom.id }} />
       </View>
 
       {/* Room Code Card */}
@@ -684,6 +801,7 @@ export default function LobbyScreen({
             data={players}
             keyExtractor={(item) => item.id}
             renderItem={renderPlayerItem}
+            extraData={isHost}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
           />
@@ -873,7 +991,7 @@ export default function LobbyScreen({
                                 isInvited && styles.friendInvitedBtnText,
                               ]}
                             >
-                              {isInvited ? 'INVITED ✓' : 'INVITE'}
+                              {isInvited ? 'COPIED ✓' : 'COPY INVITE'}
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -948,7 +1066,7 @@ export default function LobbyScreen({
                     <View style={styles.stepperContainer}>
                       <TouchableOpacity
                         style={[styles.stepperSubBtn, effectiveEditMafiaCount <= 1 && styles.stepperDisabled]}
-                        onPress={() => setEditMafiaCount((prev) => Math.max(1, prev - 1))}
+                        onPress={() => setEditMafiaCount(Math.max(1, effectiveEditMafiaCount - 1))}
                         disabled={effectiveEditMafiaCount <= 1}
                       >
                         <Text style={styles.stepperSubBtnText}>-</Text>
@@ -962,8 +1080,8 @@ export default function LobbyScreen({
                           effectiveEditMafiaCount >= maxAllowedMafiaInRules && styles.stepperDisabled,
                         ]}
                         onPress={() =>
-                          setEditMafiaCount((prev) =>
-                            Math.min(maxAllowedMafiaInRules, prev + 1)
+                          setEditMafiaCount(
+                            Math.min(maxAllowedMafiaInRules, effectiveEditMafiaCount + 1)
                           )
                         }
                         disabled={effectiveEditMafiaCount >= maxAllowedMafiaInRules}
@@ -1083,6 +1201,10 @@ export default function LobbyScreen({
 }
 
 const styles = StyleSheet.create({
+  voiceWrap: {
+    paddingHorizontal: 20,
+    marginBottom: 14,
+  },
   container: {
     flex: 1,
     backgroundColor: '#07090e',

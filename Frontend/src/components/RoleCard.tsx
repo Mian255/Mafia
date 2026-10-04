@@ -8,9 +8,13 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
+  type ImageSourcePropType,
 } from 'react-native';
+import type { GameRole } from '../types';
+import { colors, radius } from '../theme/tokens';
 
-export type RoleId = 'mafia' | 'detective' | 'doctor' | 'civilian';
+// RoleId is an alias of the canonical GameRole enum (kept exported for existing importers).
+export type RoleId = GameRole;
 
 export interface RoleData {
   id: RoleId;
@@ -32,7 +36,7 @@ export interface RoleData {
 }
 
 // Exact character images from assets
-export const CHARACTER_IMAGES: Record<RoleId, any> = {
+export const CHARACTER_IMAGES: Record<RoleId, ImageSourcePropType> = {
   mafia: require('../../assets/characters/mafia.png'),
   detective: require('../../assets/characters/detective.png'),
   doctor: require('../../assets/characters/doctor.png'),
@@ -59,10 +63,10 @@ export const ROLES_DATA: Record<RoleId, RoleData> = {
     name: 'MAFIA',
     faction: 'MAFIA FACTION',
     factionColor: '#ffffff',
-    badgeBg: '#dc2626',
-    accentColor: '#dc2626',
+    badgeBg: colors.mafia,
+    accentColor: colors.mafia,
     icon: '💀',
-    iconColor: '#ef4444',
+    iconColor: colors.accent,
     abilityTitle: 'NIGHT ELIMINATION',
     abilityColor: '#f43f5e',
     shortDesc:
@@ -80,7 +84,7 @@ export const ROLES_DATA: Record<RoleId, RoleData> = {
     faction: 'CITIZEN TEAM',
     factionColor: '#ffffff',
     badgeBg: '#334155',
-    accentColor: '#38bdf8',
+    accentColor: colors.detective,
     icon: '🔍',
     iconColor: '#cbd5e1',
     abilityTitle: 'NIGHT INVESTIGATE',
@@ -100,7 +104,7 @@ export const ROLES_DATA: Record<RoleId, RoleData> = {
     faction: 'CITIZEN TEAM',
     factionColor: '#1e1b18',
     badgeBg: '#ca8a04',
-    accentColor: '#10b981',
+    accentColor: colors.doctor,
     icon: '🧰',
     iconColor: '#eab308',
     abilityTitle: 'NIGHT PROTECTION',
@@ -120,7 +124,7 @@ export const ROLES_DATA: Record<RoleId, RoleData> = {
     faction: 'CITIZEN TEAM',
     factionColor: '#ffffff',
     badgeBg: '#334155',
-    accentColor: '#a855f7',
+    accentColor: colors.civilian,
     icon: '📢',
     iconColor: '#cbd5e1',
     abilityTitle: 'DAY TRIAL VOTE',
@@ -141,12 +145,15 @@ interface RoleCardProps {
   onSelect: (role: RoleData) => void;
 }
 
-export function RoleCard({ role, onSelect }: RoleCardProps) {
+export const RoleCard = React.memo(function RoleCard({ role, onSelect }: RoleCardProps) {
   return (
     <TouchableOpacity
       style={styles.card}
       activeOpacity={0.88}
       onPress={() => onSelect(role)}
+      accessibilityRole="button"
+      accessibilityLabel={`${role.name} role card`}
+      accessibilityHint="Opens detailed role information"
     >
       {/* Top Image Frame with edge-to-edge coverage (zero side black bars) */}
       <View style={styles.imageFrame}>
@@ -186,7 +193,7 @@ export function RoleCard({ role, onSelect }: RoleCardProps) {
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 interface ExpandedRoleModalProps {
   role: RoleData | null;
@@ -194,27 +201,23 @@ interface ExpandedRoleModalProps {
   onClose: () => void;
 }
 
-export function ExpandedRoleModal({ role, visible, onClose }: ExpandedRoleModalProps) {
+export const ExpandedRoleModal = React.memo(function ExpandedRoleModal({
+  role,
+  visible,
+  onClose,
+}: ExpandedRoleModalProps) {
   if (!visible || !role) return null;
 
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={onClose}
-    >
-      <ExpandedRoleModalInner role={role} onClose={onClose} />
-    </Modal>
-  );
-}
+  return <ExpandedRoleModalInner role={role} visible={visible} onClose={onClose} />;
+});
 
 interface InnerProps {
   role: RoleData;
+  visible: boolean;
   onClose: () => void;
 }
 
-function ExpandedRoleModalInner({ role, onClose }: InnerProps) {
+function ExpandedRoleModalInner({ role, visible, onClose }: InnerProps) {
   const [isFlipped, setIsFlipped] = useState(true);
   const [flipAnim] = useState(() => new Animated.Value(0));
   const [scaleAnim] = useState(() => new Animated.Value(0.7));
@@ -297,6 +300,12 @@ function ExpandedRoleModalInner({ role, onClose }: InnerProps) {
   });
 
   return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={handleClose}
+    >
     <TouchableWithoutFeedback onPress={handleClose}>
       <View style={styles.modalOverlay}>
         <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
@@ -447,22 +456,23 @@ function ExpandedRoleModalInner({ role, onClose }: InnerProps) {
         </TouchableWithoutFeedback>
       </View>
     </TouchableWithoutFeedback>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: '#101522',
-    borderRadius: 14,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#1d2738',
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   imageFrame: {
     width: '100%',
     height: 180,
-    backgroundColor: '#0c1017',
+    backgroundColor: colors.bg,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -473,7 +483,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: radius.sm,
   },
   factionPillText: {
     fontSize: 8.5,
@@ -490,7 +500,7 @@ const styles = StyleSheet.create({
   },
   cardContent: {
     padding: 10,
-    backgroundColor: '#101522',
+    backgroundColor: colors.surface,
   },
   titleRow: {
     flexDirection: 'row',
@@ -499,7 +509,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   roleName: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '900',
     letterSpacing: 0.5,
@@ -514,7 +524,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   shortDescription: {
-    color: '#cbd5e1',
+    color: colors.textMuted,
     fontSize: 10,
     lineHeight: 14,
     minHeight: 42,
@@ -523,7 +533,7 @@ const styles = StyleSheet.create({
   /* Modal & 3D Flip */
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(4, 7, 14, 0.92)',
+    backgroundColor: colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
@@ -540,19 +550,19 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 20,
+    borderRadius: radius.xl,
     borderWidth: 1.5,
-    borderColor: '#243046',
+    borderColor: colors.borderStrong,
     backfaceVisibility: 'hidden',
     overflow: 'hidden',
-    shadowColor: '#000000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.6,
     shadowRadius: 20,
     elevation: 12,
   },
   cardFrontFace: {
-    backgroundColor: '#101522',
+    backgroundColor: colors.surface,
   },
   modalFactionPill: {
     position: 'absolute',
@@ -566,7 +576,7 @@ const styles = StyleSheet.create({
   modalImageWrapper: {
     width: '100%',
     height: 250,
-    backgroundColor: '#0c1017',
+    backgroundColor: colors.bg,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -589,7 +599,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalRoleName: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 22,
     fontWeight: '900',
     letterSpacing: 1,
@@ -605,18 +615,18 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   modalShortDesc: {
-    color: '#cbd5e1',
+    color: colors.textMuted,
     fontSize: 12.5,
     lineHeight: 18,
   },
   flipPromptBtn: {
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: radius.md,
     alignItems: 'center',
     marginTop: 8,
   },
   flipPromptBtnText: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 11.5,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -624,7 +634,7 @@ const styles = StyleSheet.create({
 
   /* Back Face Dossier */
   cardBackFace: {
-    backgroundColor: '#0f141f',
+    backgroundColor: colors.surfaceAlt,
     padding: 18,
   },
   backHeader: {
@@ -636,7 +646,7 @@ const styles = StyleSheet.create({
   backBadgePill: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: radius.sm,
   },
   backBody: {
     flex: 1,
@@ -648,7 +658,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backRoleName: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 22,
     fontWeight: '900',
     letterSpacing: 1,
@@ -663,22 +673,22 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   loreBox: {
-    backgroundColor: '#090d14',
-    borderRadius: 10,
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
     borderLeftWidth: 3,
-    borderLeftColor: '#dc2626',
+    borderLeftColor: colors.accent,
     padding: 12,
     marginVertical: 6,
   },
   loreText: {
-    color: '#e2e8f0',
+    color: colors.textSecondary,
     fontSize: 11.5,
     lineHeight: 17,
     fontStyle: 'italic',
   },
   specsBox: {
-    backgroundColor: '#161c2b',
-    borderRadius: 10,
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.md,
     padding: 10,
     gap: 5,
   },
@@ -687,14 +697,14 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   specKey: {
-    color: '#94a3b8',
+    color: colors.textDim,
     fontSize: 9.5,
     fontWeight: '900',
     width: 76,
     letterSpacing: 0.5,
   },
   specVal: {
-    color: '#cbd5e1',
+    color: colors.textMuted,
     fontSize: 10.5,
     flex: 1,
     lineHeight: 14,
@@ -706,26 +716,26 @@ const styles = StyleSheet.create({
   },
   actionBtnFlip: {
     flex: 1,
-    backgroundColor: '#1e2638',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 10,
+    borderColor: colors.borderMuted,
+    borderRadius: radius.md,
     paddingVertical: 10,
     alignItems: 'center',
   },
   actionBtnFlipText: {
-    color: '#f8fafc',
+    color: colors.textBright,
     fontSize: 11,
     fontWeight: '700',
   },
   actionBtnClose: {
     flex: 1,
-    borderRadius: 10,
+    borderRadius: radius.md,
     paddingVertical: 10,
     alignItems: 'center',
   },
   actionBtnCloseText: {
-    color: '#ffffff',
+    color: colors.textPrimary,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,

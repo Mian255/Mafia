@@ -1,5 +1,6 @@
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { isNetworkError } from './authHelpers';
 
 export const USERNAME_MIN_LENGTH = 3;
 export const USERNAME_MAX_LENGTH = 20;
@@ -30,10 +31,19 @@ export function isPlaceholderUsername(username: string | null | undefined): bool
   return !username || PLACEHOLDER_USERNAME_PATTERN.test(username);
 }
 
-function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
+/**
+ * Runs a Supabase query with a timeout. The builder is created lazily from an AbortSignal so the
+ * signal can be threaded into the query via `.abortSignal(signal)`; on timeout we both reject and
+ * abort so the underlying request is actually cancelled instead of running on in the background.
+ */
+function withTimeout<T>(build: (signal: AbortSignal) => PromiseLike<T>, ms: number): Promise<T> {
+  const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Request timed out')), ms);
-    Promise.resolve(promise).then(
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('Request timed out'));
+    }, ms);
+    Promise.resolve(build(controller.signal)).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -65,7 +75,13 @@ export async function getUsernameStatus(user: User): Promise<UsernameStatus> {
 
   try {
     const { data, error } = await withTimeout(
-      supabase.from('profiles').select('username').eq('id', user.id).maybeSingle(),
+      (signal) =>
+        supabase
+          .from('profiles')
+          .select('username')
+          .eq('id', user.id)
+          .abortSignal(signal)
+          .maybeSingle(),
       PROFILE_TIMEOUT_MS
     );
     if (error) throw error;
@@ -73,7 +89,12 @@ export async function getUsernameStatus(user: User): Promise<UsernameStatus> {
     return isPlaceholderUsername(username)
       ? { needsSetup: true, username: null }
       : { needsSetup: false, username };
-  } catch {
+  } catch (error) {
+    // Network / timeout errors are expected when offline, so fall back to metadata silently.
+    // Any other error (DB / RLS / unexpected) still falls back, but is logged so it isn't invisible.
+    if (!isNetworkError(error)) {
+      console.error('[profile] getUsernameStatus failed to read profile:', error);
+    }
     const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
     const metaUsername = typeof metadata.username === 'string' ? metadata.username : null;
     const isSet =
@@ -95,12 +116,14 @@ function escapeLikePattern(value: string): string {
  */
 export async function isUsernameAvailable(username: string, userId: string): Promise<boolean> {
   const { data, error } = await withTimeout(
-    supabase
-      .from('profiles')
-      .select('id')
-      .ilike('username', escapeLikePattern(username))
-      .neq('id', userId)
-      .limit(1),
+    (signal) =>
+      supabase
+        .from('profiles')
+        .select('id')
+        .ilike('username', escapeLikePattern(username))
+        .neq('id', userId)
+        .abortSignal(signal)
+        .limit(1),
     PROFILE_TIMEOUT_MS
   );
   if (error) throw error;

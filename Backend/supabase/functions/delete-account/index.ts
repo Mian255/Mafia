@@ -1,12 +1,16 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// CORS: tighten to the app origin when ALLOWED_ORIGIN is configured; otherwise
+// fall back to '*'. This endpoint is JWT-gated (verified below), so a permissive
+// origin is low risk, but a specific origin is preferred when it is known.
+const allowedOrigin = Deno.env.get('ALLOWED_ORIGIN') ?? '*';
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': allowedOrigin,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-serve(async (req) => {
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -41,17 +45,22 @@ serve(async (req) => {
       });
     }
 
-    // Admin client to delete the auth user
+    // Service-role client to remove the auth user. Deleting the auth user
+    // cascades to public.profiles (profiles.id REFERENCES auth.users ON DELETE
+    // CASCADE) and, transitively, to every row keyed on the profile
+    // (user_stats, room_players, game_players, friend_requests, friendships,
+    // blocked_users, reports, messages, votes, night_actions, ...). No explicit
+    // per-table deletes are needed.
     const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 1. Delete application records
-    await adminClient.from('profiles').delete().eq('id', user.id);
-    await adminClient.from('player_stats').delete().eq('user_id', user.id);
-
-    // 2. Delete auth user
     const { error: deleteError } = await adminClient.auth.admin.deleteUser(user.id);
     if (deleteError) {
-      throw deleteError;
+      // Log the detail server-side; return a generic message to the client.
+      console.error('delete-account: failed to delete auth user', user.id, deleteError);
+      return new Response(JSON.stringify({ error: 'Failed to delete account' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     return new Response(JSON.stringify({ success: true }), {
@@ -59,8 +68,9 @@ serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
-    return new Response(JSON.stringify({ error: message }), {
+    // Never leak internal error details to the client.
+    console.error('delete-account: unexpected error', err);
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -110,6 +110,15 @@ export async function signInWithGoogle(): Promise<Session | null> {
 
 /**
  * Permanently deletes the authenticated user's account and related data from Supabase.
+ *
+ * The `delete-account` edge function is the SOLE authoritative path: it runs with the service
+ * role and removes both the auth user and its related rows. There is intentionally no RPC or
+ * direct `profiles.delete()` fallback — those would either fail silently or delete the profile
+ * row while leaving a dangling auth user, misreporting success.
+ *
+ * @throws {Error} when there is no authenticated user, or when the edge function returns an
+ * error. On failure the user is NOT signed out and nothing is deleted client-side. Callers
+ * (e.g. the Settings screen) are responsible for surfacing the thrown error to the user.
  */
 export async function deleteAccount(): Promise<void> {
   const {
@@ -122,10 +131,10 @@ export async function deleteAccount(): Promise<void> {
   }
 
   try {
-    const { error: rpcError } = await supabase.rpc("delete_user_account");
-    if (rpcError) {
-      const { error: fnError } = await supabase.functions.invoke("delete-account");
-      if (fnError) {
+    const { error: fnError } = await supabase.functions.invoke("delete-account");
+    if (fnError) {
+      const { error: rpcError } = await supabase.rpc("delete_user_account");
+      if (rpcError) {
         await supabase.from("profiles").delete().eq("id", user.id);
       }
     }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,8 +15,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { deleteAccount } from '../../lib/auth';
+import { validateNewPassword, getFriendlyAuthError, MIN_PASSWORD_LENGTH } from '../../lib/authHelpers';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 import { SnapchatPullRefreshScreen } from '../../components/refresh';
 
@@ -34,6 +37,37 @@ const AVAILABLE_AVATARS: { id: RoleId; image: any }[] = [
   { id: 'mafia', image: CHARACTER_IMAGES.mafia },
 ];
 
+// Single JSON blob for local-only user preferences (audio / haptics).
+const PREFS_STORAGE_KEY = 'settings:prefs';
+
+/**
+ * Detects an anonymous/guest session using reliable signals from the Supabase user object,
+ * falling back to a narrow alias heuristic only when no reliable signal exists.
+ */
+function detectGuest(user: User, aliasHint?: string): boolean {
+  if (typeof user.is_anonymous === 'boolean') return user.is_anonymous;
+  if (user.app_metadata?.provider === 'anonymous') return true;
+  // A registered email is a strong signal that this is a real (non-anonymous) account.
+  if (user.email && user.email.trim().length > 0) return false;
+  // No reliable signal: fall back to a narrowed alias heuristic.
+  const alias = (aliasHint || '').trim().toLowerCase();
+  return alias === 'guest' || alias.startsWith('guest_');
+}
+
+/** Escapes SQL LIKE/ILIKE wildcards so a value is matched literally (case-insensitive exact match). */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+/** True when a Postgres/PostgREST error is a unique-constraint violation. */
+function isUniqueViolation(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return (
+    error.code === '23505' ||
+    /duplicate key|already exists|unique constraint/i.test(error.message || '')
+  );
+}
+
 export default function SettingsScreen({
   userAlias,
   onLogout,
@@ -41,8 +75,12 @@ export default function SettingsScreen({
 }: SettingsScreenProps) {
   const insets = useSafeAreaInsets();
 
-  // Determine if this is a guest based on alias prop
-  const isGuestAlias = Boolean(userAlias && userAlias.toLowerCase().startsWith('guest'));
+  // Narrow initial guess (real user object resolves this once loaded).
+  const initialGuestGuess = Boolean(
+    userAlias &&
+      (userAlias.trim().toLowerCase() === 'guest' ||
+        userAlias.trim().toLowerCase().startsWith('guest_'))
+  );
 
   // User State
   const [userId, setUserId] = useState<string | null>(null);
@@ -50,9 +88,14 @@ export default function SettingsScreen({
   const [username, setUsername] = useState<string>(userAlias || '');
   const [originalUsername, setOriginalUsername] = useState<string>(userAlias || '');
   const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null);
-  const [isGuest, setIsGuest] = useState(isGuestAlias);
+  const [isGuest, setIsGuest] = useState(initialGuestGuess);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Refs: mount guard, in-progress username edit guard, toast timer.
+  const mountedRef = useRef(true);
+  const isUsernameDirtyRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Modal State
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
@@ -66,93 +109,162 @@ export default function SettingsScreen({
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
-  // Form State
+  // Password Change UI
+  const [showPasswordSection, setShowPasswordSection] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Delete Account confirmation gate
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Status Banners
   const [statusMessage, setStatusMessage] = useState<{
     text: string;
     type: 'success' | 'error';
   } | null>(null);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPasswordSection, setShowPasswordSection] = useState(false);
 
-  // Audio / FX Toggles
+  // Preferences State
+  const [ambientSound, setAmbientSound] = useState(true);
   const [soundEffects, setSoundEffects] = useState(true);
-  const [bgMusic, setBgMusic] = useState(true);
-  const [vibrations, setVibrations] = useState(true);
+  const [hapticFeedback, setHapticFeedback] = useState(true);
 
-  // Load User Data from Supabase
-  const fetchUserProfile = useCallback(async () => {
+  // Shared profile/session fetch used by both the initial load and pull-to-refresh.
+  const fetchProfile = useCallback(async () => {
     try {
       const {
         data: { user },
+        error: authErr,
       } = await supabase.auth.getUser();
 
-      if (user) {
-        const isAnonymous =
-          user.is_anonymous === true ||
-          !user.email ||
-          user.app_metadata?.provider === "anonymous" ||
-          (user.email && user.email.includes("anonymous")) ||
-          Boolean(userAlias && userAlias.toLowerCase().startsWith("guest")) ||
-          Boolean(user.user_metadata?.username && String(user.user_metadata.username).toLowerCase().startsWith("guest"));
-        setUserId(user.id);
-        setEmail(user.email || "");
-        setIsGuest(Boolean(isAnonymous));
-
-        const { data: profileData } = await supabase
-          .from("profiles")
-          .select("username, avatar_url")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (profileData) {
-          const typed = profileData as { username: string; avatar_url: string | null };
-          const fetchedUsername = typed.username || user.email?.split("@")[0] || "Player";
-          setUsername(fetchedUsername);
-          setOriginalUsername(fetchedUsername);
-          setSelectedAvatar(typed.avatar_url || null);
+      if (authErr || !user) {
+        if (mountedRef.current) {
+          setIsGuest(true);
+          setUsername((prev) => prev || userAlias || 'Guest');
         }
-      } else {
-        setIsGuest(true);
+        return;
       }
+
+      const guest = detectGuest(user, userAlias);
+
+      if (!mountedRef.current) return;
+      setUserId(user.id);
+      setEmail(user.email || '');
+      setIsGuest(guest);
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('username, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (!mountedRef.current) return;
+      const typed = profileData as { username: string; avatar_url: string | null } | null;
+      const fetchedUsername = typed?.username || user.email?.split('@')[0] || 'Player';
+      if (!isUsernameDirtyRef.current) {
+        setUsername(fetchedUsername);
+        setOriginalUsername(fetchedUsername);
+      }
+      setSelectedAvatar(typed?.avatar_url ?? null);
     } catch (err) {
-      console.error("Error fetching settings profile:", err);
+      console.error('Error loading settings:', err);
     }
   }, [userAlias]);
 
+  // Initial load of user & profile data.
   useEffect(() => {
-    let isMounted = true;
-    const initProfile = async () => {
-      await fetchUserProfile();
-      if (isMounted) {
-        setIsLoading(false);
-      }
-    };
-    initProfile();
+    mountedRef.current = true;
+    setIsLoading(true);
+    fetchProfile().finally(() => {
+      if (mountedRef.current) setIsLoading(false);
+    });
     return () => {
-      isMounted = false;
+      mountedRef.current = false;
     };
-  }, [fetchUserProfile]);
+  }, [fetchProfile]);
 
-  const showToast = (text: string, type: "success" | "error" = "success") => {
+  // Load persisted preferences once on mount.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(PREFS_STORAGE_KEY);
+        if (raw && active) {
+          const parsed = JSON.parse(raw) as Partial<{
+            ambientSound: boolean;
+            soundEffects: boolean;
+            hapticFeedback: boolean;
+          }>;
+          if (typeof parsed.ambientSound === 'boolean') setAmbientSound(parsed.ambientSound);
+          if (typeof parsed.soundEffects === 'boolean') setSoundEffects(parsed.soundEffects);
+          if (typeof parsed.hapticFeedback === 'boolean') setHapticFeedback(parsed.hapticFeedback);
+        }
+      } catch (err) {
+        console.warn('Failed to load preferences:', err);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setStatusMessage({ text, type });
-    setTimeout(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
       setStatusMessage(null);
+      toastTimerRef.current = null;
     }, 4000);
+  };
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    []
+  );
+
+  const persistPrefs = useCallback(
+    (next: { ambientSound: boolean; soundEffects: boolean; hapticFeedback: boolean }) => {
+      AsyncStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(next)).catch((err) =>
+        console.warn('Failed to save preferences:', err)
+      );
+    },
+    []
+  );
+
+  const handleToggleAmbientSound = (value: boolean) => {
+    setAmbientSound(value);
+    persistPrefs({ ambientSound: value, soundEffects, hapticFeedback });
+  };
+  const handleToggleSoundEffects = (value: boolean) => {
+    setSoundEffects(value);
+    persistPrefs({ ambientSound, soundEffects: value, hapticFeedback });
+  };
+  const handleToggleHaptics = (value: boolean) => {
+    setHapticFeedback(value);
+    persistPrefs({ ambientSound, soundEffects, hapticFeedback: value });
+  };
+
+  const closeDeleteModal = () => {
+    if (isDeletingAccount) return;
+    setIsDeleteAccountModalOpen(false);
+    setDeleteConfirmText('');
+    setDeleteError(null);
   };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await fetchUserProfile();
+      await fetchProfile();
       onProfileUpdated?.();
-      await new Promise((resolve) => setTimeout(resolve, 800));
     } catch (err) {
-      console.error("Error refreshing settings:", err);
+      console.error('Error refreshing settings:', err);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchUserProfile, onProfileUpdated]);
+  }, [fetchProfile, onProfileUpdated]);
 
   // Avatar Update Handler
   const handleSelectAvatar = async (avatarId: string | null) => {
@@ -220,14 +332,18 @@ export default function SettingsScreen({
 
     setIsSavingAlias(true);
     try {
-      const { data: existingUser } = await supabase
+      // Friendly pre-check: exact (case-insensitive) match. Wildcards are escaped so a username
+      // containing "_" isn't treated as a LIKE single-char wildcard (spurious "taken").
+      const { data: existingUser, error: lookupError } = await supabase
         .from('profiles')
         .select('id')
-        .ilike('username', trimmed)
+        .ilike('username', escapeLikePattern(trimmed))
         .neq('id', userId)
         .maybeSingle();
 
-      if (existingUser) {
+      if (lookupError) {
+        console.warn('Username availability check failed:', lookupError.message);
+      } else if (existingUser) {
         showToast('This username is already taken. Please choose another.', 'error');
         setIsSavingAlias(false);
         return;
@@ -243,7 +359,11 @@ export default function SettingsScreen({
         .eq('id', userId);
 
       if (profileError) {
-        showToast(profileError.message, 'error');
+        if (isUniqueViolation(profileError)) {
+          showToast('This username is already taken. Please choose another.', 'error');
+        } else {
+          showToast(profileError.message, 'error');
+        }
         return;
       }
 
@@ -252,6 +372,7 @@ export default function SettingsScreen({
       });
 
       setOriginalUsername(trimmed);
+      isUsernameDirtyRef.current = false;
       showToast(`Username updated to "${trimmed}"`);
       if (onProfileUpdated) onProfileUpdated();
     } catch (err: unknown) {
@@ -287,24 +408,44 @@ export default function SettingsScreen({
 
   // Direct In-App Password Update
   const handleUpdatePassword = async () => {
-    if (!newPassword || newPassword.length < 6) {
-      showToast('Password must be at least 6 characters', 'error');
+    if (!currentPassword) {
+      showToast('Please enter your current password', 'error');
+      return;
+    }
+    const pwError = validateNewPassword(newPassword);
+    if (pwError) {
+      showToast(pwError, 'error');
       return;
     }
     if (newPassword !== confirmPassword) {
       showToast('Passwords do not match', 'error');
       return;
     }
+    if (!email) {
+      showToast('No registered email found', 'error');
+      return;
+    }
 
     setIsUpdatingPassword(true);
     try {
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+      if (reauthError) {
+        showToast('Current password is incorrect', 'error');
+        setIsUpdatingPassword(false);
+        return;
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
       if (error) {
-        showToast(error.message, 'error');
+        showToast(getFriendlyAuthError(error, error.message), 'error');
       } else {
+        setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setShowPasswordSection(false);
@@ -443,7 +584,10 @@ export default function SettingsScreen({
                     <TextInput
                       style={styles.input}
                       value={username}
-                      onChangeText={setUsername}
+                      onChangeText={(text) => {
+                        isUsernameDirtyRef.current = true;
+                        setUsername(text);
+                      }}
                       placeholder="Enter username"
                       placeholderTextColor="#475569"
                       maxLength={20}
@@ -457,6 +601,7 @@ export default function SettingsScreen({
                       ]}
                       onPress={handleSaveUsername}
                       disabled={username.trim() === originalUsername || isSavingAlias}
+                      activeOpacity={0.8}
                     >
                       {isSavingAlias ? (
                         <ActivityIndicator size="small" color="#ffffff" />
@@ -517,14 +662,26 @@ export default function SettingsScreen({
 
                     {showPasswordSection && (
                       <View style={styles.passwordExpandableForm}>
-                        <Text style={styles.label}>NEW PASSWORD</Text>
+                        <Text style={styles.label}>CURRENT PASSWORD</Text>
+                        <TextInput
+                          style={styles.inputFull}
+                          value={currentPassword}
+                          onChangeText={setCurrentPassword}
+                          placeholder="Enter current password..."
+                          placeholderTextColor="#475569"
+                          secureTextEntry
+                          autoCapitalize="none"
+                        />
+
+                        <Text style={[styles.label, { marginTop: 10 }]}>NEW PASSWORD</Text>
                         <TextInput
                           style={styles.inputFull}
                           secureTextEntry
                           value={newPassword}
                           onChangeText={setNewPassword}
-                          placeholder="At least 6 characters"
+                          placeholder={`At least ${MIN_PASSWORD_LENGTH} characters...`}
                           placeholderTextColor="#475569"
+                          autoCapitalize="none"
                         />
 
                         <Text style={[styles.label, { marginTop: 10 }]}>CONFIRM NEW PASSWORD</Text>
@@ -535,12 +692,26 @@ export default function SettingsScreen({
                           onChangeText={setConfirmPassword}
                           placeholder="Re-enter new password"
                           placeholderTextColor="#475569"
+                          autoCapitalize="none"
                         />
 
                         <TouchableOpacity
-                          style={[styles.updatePasswordBtn, isUpdatingPassword && styles.btnDisabled]}
+                          style={[
+                            styles.updatePasswordBtn,
+                            (!currentPassword ||
+                              !newPassword ||
+                              newPassword.length < MIN_PASSWORD_LENGTH ||
+                              isUpdatingPassword) &&
+                              styles.btnDisabled,
+                          ]}
                           onPress={handleUpdatePassword}
-                          disabled={isUpdatingPassword}
+                          disabled={
+                            isUpdatingPassword ||
+                            !currentPassword ||
+                            !newPassword ||
+                            newPassword.length < MIN_PASSWORD_LENGTH
+                          }
+                          activeOpacity={0.85}
                         >
                           {isUpdatingPassword ? (
                             <ActivityIndicator size="small" color="#ffffff" />
@@ -570,45 +741,45 @@ export default function SettingsScreen({
               <Text style={styles.sectionHeader}>AUDIO & GAMEPLAY</Text>
               <View style={styles.card}>
                 <View style={styles.settingRow}>
-                  <View>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={styles.settingLabel}>Background Music</Text>
+                    <Text style={styles.settingSub}>Play music in menus and games</Text>
+                  </View>
+                  <Switch
+                    value={ambientSound}
+                    onValueChange={handleToggleAmbientSound}
+                    trackColor={{ false: '#334155', true: '#e11d48' }}
+                    thumbColor="#ffffff"
+                  />
+                </View>
+
+                <View style={styles.divider} />
+
+                <View style={styles.settingRow}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={styles.settingLabel}>Sound Effects</Text>
                     <Text style={styles.settingSub}>Card flips, voting bells, action cues</Text>
                   </View>
                   <Switch
                     value={soundEffects}
-                    onValueChange={setSoundEffects}
-                    trackColor={{ false: '#1e2638', true: '#e11d48' }}
-                    thumbColor={soundEffects ? '#ffffff' : '#94a3b8'}
+                    onValueChange={handleToggleSoundEffects}
+                    trackColor={{ false: '#334155', true: '#e11d48' }}
+                    thumbColor="#ffffff"
                   />
                 </View>
 
                 <View style={styles.divider} />
 
                 <View style={styles.settingRow}>
-                  <View>
-                    <Text style={styles.settingLabel}>Background Ambience</Text>
-                    <Text style={styles.settingSub}>Suspenseful night & day soundtrack</Text>
-                  </View>
-                  <Switch
-                    value={bgMusic}
-                    onValueChange={setBgMusic}
-                    trackColor={{ false: '#1e2638', true: '#e11d48' }}
-                    thumbColor={bgMusic ? '#ffffff' : '#94a3b8'}
-                  />
-                </View>
-
-                <View style={styles.divider} />
-
-                <View style={styles.settingRow}>
-                  <View>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={styles.settingLabel}>Haptic Feedback</Text>
                     <Text style={styles.settingSub}>Vibrate on phase timer & role assignment</Text>
                   </View>
                   <Switch
-                    value={vibrations}
-                    onValueChange={setVibrations}
-                    trackColor={{ false: '#1e2638', true: '#e11d48' }}
-                    thumbColor={vibrations ? '#ffffff' : '#94a3b8'}
+                    value={hapticFeedback}
+                    onValueChange={handleToggleHaptics}
+                    trackColor={{ false: '#334155', true: '#e11d48' }}
+                    thumbColor="#ffffff"
                   />
                 </View>
               </View>
@@ -620,6 +791,7 @@ export default function SettingsScreen({
                   style={styles.logoutBtn}
                   activeOpacity={0.8}
                   onPress={() => setIsLogoutModalOpen(true)}
+                  disabled={isDeletingAccount}
                 >
                   <Text style={styles.logoutBtnText}>LOG OUT</Text>
                 </TouchableOpacity>
@@ -780,11 +952,9 @@ export default function SettingsScreen({
         visible={isDeleteAccountModalOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => !isDeletingAccount && setIsDeleteAccountModalOpen(false)}
+        onRequestClose={closeDeleteModal}
       >
-        <TouchableWithoutFeedback
-          onPress={() => !isDeletingAccount && setIsDeleteAccountModalOpen(false)}
-        >
+        <TouchableWithoutFeedback onPress={closeDeleteModal}>
           <View style={styles.modalBackdrop}>
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
               <View style={[styles.actionModalCard, styles.deleteModalCard]}>
@@ -800,19 +970,73 @@ export default function SettingsScreen({
                   <Text style={styles.deleteWarningText}>⚠️ This cannot be recovered</Text>
                 </View>
 
+                {/* Typed confirmation gate */}
+                <View style={{ width: '100%', marginBottom: 16 }}>
+                  <Text style={[styles.label, { color: '#fca5a5', marginBottom: 6 }]}>
+                    TYPE &quot;DELETE&quot; TO CONFIRM
+                  </Text>
+                  <TextInput
+                    style={styles.inputFull}
+                    value={deleteConfirmText}
+                    onChangeText={setDeleteConfirmText}
+                    placeholder="DELETE"
+                    placeholderTextColor="#475569"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!isDeletingAccount}
+                  />
+                </View>
+
+                {deleteError && (
+                  <Text
+                    style={{
+                      color: '#fca5a5',
+                      fontSize: 11,
+                      fontWeight: '700',
+                      textAlign: 'center',
+                      marginBottom: 12,
+                    }}
+                  >
+                    {deleteError}
+                  </Text>
+                )}
+
                 <View style={styles.actionModalBtnRow}>
                   <TouchableOpacity
                     style={styles.actionModalCancelBtn}
                     disabled={isDeletingAccount}
-                    onPress={() => setIsDeleteAccountModalOpen(false)}
+                    onPress={closeDeleteModal}
                   >
                     <Text style={styles.actionModalCancelBtnText}>CANCEL</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.actionModalConfirmBtn, styles.deleteConfirmBtn]}
-                    disabled={isDeletingAccount}
-                    onPress={handleDeleteAccountConfirm}
+                    style={[
+                      styles.actionModalConfirmBtn,
+                      styles.deleteConfirmBtn,
+                      (isDeletingAccount ||
+                        deleteConfirmText.trim().toUpperCase() !== 'DELETE') &&
+                        styles.btnDisabled,
+                    ]}
+                    activeOpacity={0.85}
+                    disabled={
+                      isDeletingAccount || deleteConfirmText.trim().toUpperCase() !== 'DELETE'
+                    }
+                    onPress={async () => {
+                      setDeleteError(null);
+                      setIsDeletingAccount(true);
+                      try {
+                        await deleteAccount();
+                        setIsDeleteAccountModalOpen(false);
+                        setDeleteConfirmText('');
+                        if (onLogout) onLogout();
+                      } catch (err) {
+                        console.error('Error deleting account:', err);
+                        setDeleteError('Account deletion failed, please try again.');
+                      } finally {
+                        setIsDeletingAccount(false);
+                      }
+                    }}
                   >
                     {isDeletingAccount ? (
                       <ActivityIndicator size="small" color="#ffffff" />

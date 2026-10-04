@@ -17,6 +17,7 @@ import {
   SignUpScreen,
   SplashScreen,
 } from './src/screens';
+import GameScreen from './src/screens/game/GameScreen';
 import { getUsernameStatus, isPlaceholderUsername } from './src/lib/profile';
 import type { Room } from './src/lib/rooms';
 
@@ -29,15 +30,14 @@ type ScreenState =
   | 'home'
   | 'create-room'
   | 'join-room'
-  | 'lobby';
+  | 'lobby'
+  | 'game';
 
-/** Screens that require a signed-in user. Losing the session on one of these returns to Login. */
-const PROTECTED_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
-  'profile-setup',
-  'home',
-  'create-room',
-  'join-room',
-  'lobby',
+/** Pre-auth entry screens. A user becoming authenticated on one of these should be routed onward. */
+const AUTH_ENTRY_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
+  'splash',
+  'login',
+  'signup',
 ]);
 
 export default function App() {
@@ -72,7 +72,6 @@ export default function App() {
    * Go back to the previous screen in history.
    */
   const goBack = useCallback((): boolean => {
-    // If currently in lobby, leave lobby cleanly
     if (currentScreen === 'lobby') {
       setActiveRoom(null);
       setCurrentScreen('home');
@@ -80,7 +79,13 @@ export default function App() {
       return true;
     }
 
-    // If on non-root auth screens, return to login
+    if (currentScreen === 'game') {
+      setActiveRoom(null);
+      setCurrentScreen('home');
+      setNavigationHistory(['home']);
+      return true;
+    }
+
     if (currentScreen === 'signup' || currentScreen === 'forgot-password') {
       setRecoveryStep('request');
       setCurrentScreen('login');
@@ -88,24 +93,21 @@ export default function App() {
       return true;
     }
 
-    // If on room creation or join, return to home
-    if (currentScreen === 'create-room' || currentScreen === 'join-room') {
+    if (currentScreen === 'create-room' || currentScreen === 'join-room' || currentScreen === 'profile-setup') {
       setCurrentScreen('home');
       setNavigationHistory(['home']);
       return true;
     }
 
-    // If there is history to pop
     if (navigationHistory.length > 1) {
       const newHistory = [...navigationHistory];
-      newHistory.pop(); // remove current
+      newHistory.pop();
       const previousScreen = newHistory[newHistory.length - 1];
       setNavigationHistory(newHistory);
       setCurrentScreen(previousScreen);
       return true;
     }
 
-    // If on home or login root screens, handle double tap to exit on Android
     if (currentScreen === 'home' || currentScreen === 'login') {
       const now = Date.now();
       if (now - lastBackPressTimeRef.current < 2000) {
@@ -122,17 +124,12 @@ export default function App() {
     return false;
   }, [currentScreen, navigationHistory]);
 
-  // Hardware/gesture BackHandler subscription
   useEffect(() => {
-    const handleHardwareBackPress = () => {
-      return goBack();
-    };
-
+    const handleHardwareBackPress = () => goBack();
     const backSubscription = BackHandler.addEventListener(
       'hardwareBackPress',
       handleHardwareBackPress
     );
-
     return () => backSubscription.remove();
   }, [goBack]);
 
@@ -143,14 +140,12 @@ export default function App() {
   const resolveSignedInDestination = useCallback(async (user: User): Promise<ScreenState> => {
     setCurrentUser(user);
 
-    // 1. If user already has a valid chosen username in session metadata, go straight to home
     const metaUsername = user.user_metadata?.username;
     if (metaUsername && !isPlaceholderUsername(metaUsername)) {
       setUserAlias(metaUsername);
       return 'home';
     }
 
-    // 2. Look up username in profiles database
     const status = await getUsernameStatus(user);
     if (status.needsSetup) {
       return 'profile-setup';
@@ -159,27 +154,24 @@ export default function App() {
     const chosenName = status.username ?? getDisplayName(user);
     setUserAlias(chosenName);
 
-    // 3. Cache to auth metadata so future launches load instantly
-    try {
-      supabase.auth.updateUser({ data: { username: chosenName, username_set: true } });
-    } catch {
-      // ignore
-    }
+    void supabase.auth
+      .updateUser({ data: { username: chosenName, username_set: true } })
+      .catch(() => {});
 
     return 'home';
   }, []);
 
   useEffect(() => {
     let isMounted = true;
+    let hasSession = false;
 
-    // 1. Check the persisted Supabase session from AsyncStorage on app launch
     const checkInitialSession = async () => {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
         if (!isMounted) return;
-
+        hasSession = !!session?.user;
         if (session?.user) {
           const destination = await resolveSignedInDestination(session.user);
           if (isMounted) {
@@ -211,7 +203,11 @@ export default function App() {
 
     checkInitialSession();
 
-    // 2. Subscribe to auth state changes
+    const fallbackTimer = setTimeout(() => {
+      if (!isMounted) return;
+      setInitialDestination((prev) => prev ?? (hasSession ? 'home' : 'login'));
+    }, 7000);
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -240,7 +236,6 @@ export default function App() {
       }
     });
 
-    // 3. Handle deep linking when app is opened via URL (e.g. mafia://)
     const handleDeepLink = async (event: { url: string }) => {
       if (event.url) {
         try {
@@ -256,25 +251,25 @@ export default function App() {
             setCurrentScreen('forgot-password');
             setNavigationHistory((prev) => [...prev, 'forgot-password']);
           }
-        } catch {
-          // Handled or non-recovery link
-        }
+        } catch {}
       }
     };
 
     const linkingSub = Linking.addEventListener('url', handleDeepLink);
-    Linking.getInitialURL().then((url) => {
-      if (url) handleDeepLink({ url });
-    });
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url) handleDeepLink({ url });
+      })
+      .catch(() => {});
 
     return () => {
       isMounted = false;
+      clearTimeout(fallbackTimer);
       subscription.unsubscribe();
       linkingSub.remove();
     };
   }, [resolveSignedInDestination]);
 
-  // Handle transition when splash finishes
   const handleSplashFinish = useCallback(() => {
     splashFinishedRef.current = true;
     setSplashFinished(true);
@@ -283,7 +278,6 @@ export default function App() {
     setNavigationHistory([destination]);
   }, [initialDestination]);
 
-  // When initialDestination is determined after splash has already finished
   useEffect(() => {
     if (splashFinished && initialDestination && currentScreen === 'splash') {
       setCurrentScreen(initialDestination);
@@ -291,7 +285,6 @@ export default function App() {
     }
   }, [splashFinished, initialDestination, currentScreen]);
 
-  /** Called by Login / Sign Up once Supabase returned a session for an allowed user. */
   const handleAuthenticated = useCallback(
     async (user: User) => {
       const destination = await resolveSignedInDestination(user);
@@ -339,6 +332,15 @@ export default function App() {
     setActiveRoom(null);
     setCurrentScreen('home');
     setNavigationHistory(['home']);
+  }, []);
+
+  const handleStartGame = useCallback(() => {
+    setCurrentScreen('game');
+  }, []);
+
+  const handleExitGame = useCallback(() => {
+    setActiveRoom(null);
+    setCurrentScreen('home');
   }, []);
 
   return (
@@ -411,10 +413,15 @@ export default function App() {
             room={activeRoom}
             currentUserId={currentUser.id}
             onLeave={handleLeaveLobby}
-            onStartGame={(roomId) => {
-              // Future Phase 4: Route to GameScreen
-              console.log('Game Starting for room:', roomId);
-            }}
+            onStartGame={handleStartGame}
+          />
+        )}
+
+        {currentScreen === 'game' && activeRoom && currentUser && (
+          <GameScreen
+            room={activeRoom}
+            currentUserId={currentUser.id}
+            onExit={handleExitGame}
           />
         )}
       </View>

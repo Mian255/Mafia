@@ -29,6 +29,10 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,
+    // PKCE for OAuth: the code verifier is persisted by the storage adapter above (AsyncStorage
+    // on native) and consumed by exchangeCodeForSession() in auth.ts when the `code` redirect
+    // param comes back. Safer than the implicit flow for native/mobile redirects.
+    flowType: 'pkce',
   },
 });
 

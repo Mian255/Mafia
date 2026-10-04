@@ -194,7 +194,6 @@ export default function ForgotPasswordScreen({
 
   const handleUpdatePassword = useStableCallback(async () => {
     if (requestInFlight.current) return;
-
     const err = validateNewPassword(newPassword);
     if (err) {
       setFieldError(err);
