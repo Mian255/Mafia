@@ -1,3 +1,6 @@
+// @ts-nocheck
+declare const Deno: any;
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // CORS: tighten to the app origin when ALLOWED_ORIGIN is configured; otherwise
