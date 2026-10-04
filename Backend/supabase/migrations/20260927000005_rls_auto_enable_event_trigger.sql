@@ -1,5 +1,5 @@
 -- ============================================================================
--- 20260926000004_rls_auto_enable_event_trigger.sql
+-- 20260927000005_rls_auto_enable_event_trigger.sql
 --
 -- RECONSTRUCTED reconciliation migration.
 --
