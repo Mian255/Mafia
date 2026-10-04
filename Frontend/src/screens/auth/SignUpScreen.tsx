@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -61,6 +62,7 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
   const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null);
 
   const usernameRef = useRef<TextInput>(null);
@@ -238,7 +240,63 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
     }
   });
 
-  const busy = loading || googleLoading;
+  const handleGuestLogin = useStableCallback(async () => {
+    if (requestInFlight.current) return;
+
+    setFormError('');
+    setFieldErrors({});
+    requestInFlight.current = true;
+    setGuestLoading(true);
+
+    try {
+      // 1. Try Supabase Anonymous Auth
+      const { data, error } = await supabase.auth.signInAnonymously();
+
+      if (!error && data.session?.user) {
+        await onSignUpSuccess?.(data.session.user);
+        return;
+      }
+
+      // 2. Fallback: Auto-generate a unique guest account if anonymous auth is disabled
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      const uniqueGuestEmail = `guest_${Date.now()}_${rand}@mafia.local`;
+      const uniqueGuestUsername = `Guest_${rand}`;
+      const uniqueGuestPassword = `GuestPass#${Date.now()}`;
+
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: uniqueGuestEmail,
+        password: uniqueGuestPassword,
+        options: {
+          data: {
+            username: uniqueGuestUsername,
+          },
+        },
+      });
+
+      if (signUpError) {
+        setFormError(getFriendlyAuthError(signUpError, 'Failed to sign in as Guest. Please try creating an account.'));
+      } else if (signUpData.session?.user) {
+        await onSignUpSuccess?.(signUpData.session.user);
+      } else if (signUpData.user) {
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+          email: uniqueGuestEmail,
+          password: uniqueGuestPassword,
+        });
+        if (signInData.session?.user) {
+          await onSignUpSuccess?.(signInData.session.user);
+        } else {
+          setFormError(getFriendlyAuthError(signInErr, 'Failed to sign in as Guest.'));
+        }
+      }
+    } catch (err: unknown) {
+      setFormError(getFriendlyAuthError(err, 'Guest login error. Please try again.'));
+    } finally {
+      setGuestLoading(false);
+      requestInFlight.current = false;
+    }
+  });
+
+  const busy = loading || googleLoading || guestLoading;
 
   return (
     <View style={styles.container}>
@@ -388,6 +446,19 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
                     loading={googleLoading}
                     disabled={busy}
                   />
+
+                  <TouchableOpacity
+                    style={styles.guestButton}
+                    onPress={handleGuestLogin}
+                    disabled={busy}
+                    activeOpacity={0.8}
+                  >
+                    {guestLoading ? (
+                      <ActivityIndicator size="small" color="#fde68a" />
+                    ) : (
+                      <Text style={styles.guestButtonText}>PLAY AS GUEST 🎭</Text>
+                    )}
+                  </TouchableOpacity>
                 </>
               )}
             </AuthCard>
@@ -487,6 +558,23 @@ const styles = StyleSheet.create({
   logInText: {
     color: '#fde68a',
     fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  guestButton: {
+    width: '100%',
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(253, 230, 138, 0.4)',
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  guestButtonText: {
+    color: '#fde68a',
+    fontSize: 13,
     fontWeight: '900',
     letterSpacing: 1.2,
   },
