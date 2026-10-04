@@ -17,7 +17,7 @@ const PHASE_LABEL: Record<string, string> = {
  * Shown to eliminated players. They spectate the living game and talk privately
  * in the `ghost` channel until the game ends (GameOverScreen takes over then).
  */
-export default function DeadPlayerScreen({ state, currentUserId }: PhaseScreenProps) {
+export default function DeadPlayerScreen({ state, currentUserId, narratorMessage }: PhaseScreenProps) {
   const { game, players, messages, sendChat, activeChannel, timeRemaining } = state;
   const living = players.filter((p) => p.is_alive);
   const phaseLabel = game ? PHASE_LABEL[game.phase] ?? 'Spectating' : 'Spectating';
@@ -28,6 +28,7 @@ export default function DeadPlayerScreen({ state, currentUserId }: PhaseScreenPr
       round={game?.round_number}
       timeRemaining={timeRemaining}
       accent={colors.textFaint}
+      narratorMessage={narratorMessage}
     >
       <View style={styles.banner}>
         <Text style={styles.bannerIcon}>👻</Text>

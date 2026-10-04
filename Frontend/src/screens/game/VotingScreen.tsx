@@ -9,7 +9,7 @@ type Selection = string | 'skip' | null;
  * Day voting. Living players tap a living seat (or Skip) and confirm; the vote
  * can be changed until the timer expires. Resolution happens server-side.
  */
-export default function VotingScreen({ state, currentUserId }: PhaseScreenProps) {
+export default function VotingScreen({ state, currentUserId, narratorMessage }: PhaseScreenProps) {
   const { game, players, mySeat, timeRemaining, castVote } = state;
   const [selected, setSelected] = useState<Selection>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -36,6 +36,7 @@ export default function VotingScreen({ state, currentUserId }: PhaseScreenProps)
       round={game?.round_number}
       timeRemaining={timeRemaining}
       accent={colors.accent}
+      narratorMessage={narratorMessage}
     >
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.prompt}>Vote to eliminate a suspect.</Text>

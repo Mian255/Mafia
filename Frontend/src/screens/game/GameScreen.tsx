@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import type { Room } from '../../lib/rooms';
 import { useGameState } from '../../hooks/useGameState';
+import { useNarrator } from '../../hooks/useNarrator';
 import { colors, fontSize, spacing } from '../../theme/tokens';
 import { PrimaryButton } from './gameUi';
 import RoleRevealScreen from './RoleRevealScreen';
@@ -26,6 +27,7 @@ interface GameScreenProps {
  */
 export default function GameScreen({ room, currentUserId, onExit }: GameScreenProps) {
   const state = useGameState(room.id, currentUserId);
+  const narrator = useNarrator(state);
   const { loading, error, game, isAlive } = state;
 
   // Loading / error / no-active-game fallbacks.
@@ -51,7 +53,13 @@ export default function GameScreen({ room, currentUserId, onExit }: GameScreenPr
     );
   }
 
-  const props = { state, currentUserId, onExit };
+  const props = {
+    state,
+    currentUserId,
+    onExit,
+    narratorMessage: narrator.currentMessage,
+    speakCustom: narrator.speakCustom,
+  };
 
   // Game over is shown to everyone (alive or dead) before the dead-player branch.
   if (game.phase === 'game_over') return <GameOverScreen {...props} />;

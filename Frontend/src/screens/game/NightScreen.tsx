@@ -16,7 +16,7 @@ const ACTION_PROMPT: Record<string, string> = {
  * waits. The detective also sees their previous-round investigation result via
  * the private get_investigation_result RPC.
  */
-export default function NightScreen({ state, currentUserId }: PhaseScreenProps) {
+export default function NightScreen({ state, currentUserId, narratorMessage, speakCustom }: PhaseScreenProps) {
   const { game, myRole, mySeat, players, timeRemaining, submitNightAction, getInvestigation } = state;
   const accent = myRole ? ROLE_COLOR[myRole] : colors.detective;
   const canAct = mySeat?.is_alive === true && (myRole === 'mafia' || myRole === 'doctor' || myRole === 'detective');
@@ -57,6 +57,13 @@ export default function NightScreen({ state, currentUserId }: PhaseScreenProps) 
     try {
       await submitNightAction(selectedId);
       setSubmitted(true);
+      if (myRole === 'mafia') {
+        speakCustom?.('Mafia, target chosen. Close your eyes.');
+      } else if (myRole === 'doctor') {
+        speakCustom?.('Doctor, protection chosen. Close your eyes.');
+      } else if (myRole === 'detective') {
+        speakCustom?.('Detective, investigation chosen. Close your eyes.');
+      }
     } catch (e) {
       Alert.alert('Action failed', e instanceof Error ? e.message : 'Please try again.');
     } finally {
@@ -65,7 +72,7 @@ export default function NightScreen({ state, currentUserId }: PhaseScreenProps) 
   };
 
   return (
-    <GameShell phaseLabel="Night" round={game?.round_number} timeRemaining={timeRemaining} accent={accent}>
+    <GameShell phaseLabel="Night" round={game?.round_number} timeRemaining={timeRemaining} accent={accent} narratorMessage={narratorMessage}>
       {/* Mafia coordinate by voice at night (MAF-073); other roles see nothing. */}
       {game && myRole === 'mafia' && <View style={styles.voiceWrap}><VoiceBar channel="mafia" ids={{ gameId: game.id }} compact /></View>}
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>

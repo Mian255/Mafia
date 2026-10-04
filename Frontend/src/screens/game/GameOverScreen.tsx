@@ -14,7 +14,7 @@ const WINNER_COPY: Record<Exclude<GameWinner, null>, { title: string; sub: strin
  * End-of-game summary: winner banner, the fully revealed roster (roles are
  * unmasked once the game is over), and a route back home.
  */
-export default function GameOverScreen({ state, onExit }: PhaseScreenProps) {
+export default function GameOverScreen({ state, onExit, narratorMessage }: PhaseScreenProps) {
   const { game, players } = state;
   const winner = game?.winner ?? null;
   const copy = winner ? WINNER_COPY[winner] : WINNER_COPY.draw;
@@ -22,6 +22,12 @@ export default function GameOverScreen({ state, onExit }: PhaseScreenProps) {
   return (
     <View style={styles.shell}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {narratorMessage && (
+          <View style={{ backgroundColor: 'rgba(225, 29, 72, 0.12)', borderWidth: 1, borderColor: 'rgba(225, 29, 72, 0.35)', padding: 12, borderRadius: 10, marginBottom: 16 }}>
+            <Text style={{ color: '#f43f5e', fontSize: 11, fontWeight: '900', letterSpacing: 1, marginBottom: 2 }}>🎙️ NARRATOR</Text>
+            <Text style={{ color: '#f8fafc', fontSize: 13, fontWeight: '600' }}>{narratorMessage}</Text>
+          </View>
+        )}
         <Text style={styles.kicker}>GAME OVER</Text>
         <Text style={[styles.title, { color: copy.color }]}>{copy.title}</Text>
         <Text style={styles.sub}>{copy.sub}</Text>

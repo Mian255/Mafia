@@ -23,6 +23,8 @@ export interface PhaseScreenProps {
   state: GameStateValue;
   currentUserId: string;
   onExit: () => void;
+  narratorMessage?: string | null;
+  speakCustom?: (text: string) => void;
 }
 
 // Role accent colours + labels reused across the game screens.
@@ -190,15 +192,17 @@ interface GameShellProps {
   round?: number;
   timeRemaining?: number;
   accent?: string;
+  narratorMessage?: string | null;
   children: React.ReactNode;
 }
 
-/** Dark screen shell + header (phase label, round, countdown) shared by all phases. */
+/** Dark screen shell + header (phase label, round, countdown, narrator) shared by all phases. */
 export function GameShell({
   phaseLabel,
   round,
   timeRemaining,
   accent = colors.accent,
+  narratorMessage,
   children,
 }: GameShellProps) {
   return (
@@ -217,6 +221,17 @@ export function GameShell({
           </View>
         )}
       </View>
+
+      {narratorMessage ? (
+        <View style={styles.narratorBanner}>
+          <View style={styles.narratorHeaderRow}>
+            <Text style={styles.narratorBadge}>🎙️ NARRATOR</Text>
+            <View style={styles.audioPulseDot} />
+          </View>
+          <Text style={styles.narratorText}>{narratorMessage}</Text>
+        </View>
+      ) : null}
+
       <View style={styles.body}>{children}</View>
     </View>
   );
@@ -497,5 +512,40 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: fontSize.sm,
     fontWeight: '800',
+  },
+  narratorBanner: {
+    backgroundColor: 'rgba(225, 29, 72, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(225, 29, 72, 0.35)',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+  },
+  narratorHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  narratorBadge: {
+    color: '#f43f5e',
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  audioPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#f43f5e',
+  },
+  narratorText: {
+    color: colors.textBright,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    lineHeight: 18,
   },
 });

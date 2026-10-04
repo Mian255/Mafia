@@ -13,7 +13,7 @@ import { GameShell, ROLE_COLOR, type PhaseScreenProps } from './gameUi';
  * Shows the player their secret role for a few seconds before night falls.
  * Reuses ROLES_DATA / CHARACTER_IMAGES and the flip-card modal from RoleCard.
  */
-export default function RoleRevealScreen({ state }: PhaseScreenProps) {
+export default function RoleRevealScreen({ state, narratorMessage }: PhaseScreenProps) {
   const { game, myRole, timeRemaining } = state;
   const [detailsOpen, setDetailsOpen] = useState(false);
   const role: RoleData | null = myRole ? ROLES_DATA[myRole] : null;
@@ -25,6 +25,7 @@ export default function RoleRevealScreen({ state }: PhaseScreenProps) {
       round={game?.round_number}
       timeRemaining={timeRemaining}
       accent={accent}
+      narratorMessage={narratorMessage}
     >
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.kicker}>YOUR SECRET ROLE</Text>
