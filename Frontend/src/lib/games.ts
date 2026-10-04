@@ -175,11 +175,18 @@ export async function getInvestigationResult(
  * may not read).
  */
 export async function fetchMessages(gameId: string, channel: ChatChannel): Promise<ChatMessage[]> {
-  const { data, error } = await supabase
+  let query = supabase
     .from('messages')
     .select('*, sender:profiles!messages_sender_id_fkey(username, avatar_url)')
-    .eq('game_id', gameId)
-    .eq('channel', channel)
+    .eq('game_id', gameId);
+
+  if (channel === 'ghost') {
+    query = query.in('channel', ['ghost', 'day']);
+  } else {
+    query = query.eq('channel', channel);
+  }
+
+  const { data, error } = await query
     .order('created_at', { ascending: true })
     .limit(100);
 

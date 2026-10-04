@@ -296,7 +296,12 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
             if (!isMountedRef.current) return;
             const row = payload.new as ChatMessage;
             // The filter can't scope to a channel, so drop other channels here.
-            if (row.channel !== activeChannelRef.current) return;
+            const currChannel = activeChannelRef.current;
+            if (currChannel === 'ghost') {
+              if (row.channel !== 'ghost' && row.channel !== 'day') return;
+            } else if (row.channel !== currChannel) {
+              return;
+            }
             const sender = playersRef.current.find((p) => p.user_id === row.sender_id);
             const enriched: ChatMessage = {
               ...row,
