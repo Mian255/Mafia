@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -59,6 +60,7 @@ export default function LoginScreen({
   const [noAccountFound, setNoAccountFound] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
 
   const passwordInputRef = useRef<TextInput>(null);
   const requestInFlight = useRef(false);
@@ -166,7 +168,8 @@ export default function LoginScreen({
   const handleGoogleLogin = useStableCallback(async () => {
     if (requestInFlight.current) return;
 
-    const limitCheck = rateLimiter.checkLimit('login', 'google_oauth');
+    const userKey = email.trim().toLowerCase() || 'google';
+    const limitCheck = rateLimiter.checkLimit('login', userKey);
     if (!limitCheck.allowed) {
       setFormError(limitCheck.message || 'Too many attempts.');
       return;
@@ -181,17 +184,17 @@ export default function LoginScreen({
     try {
       const session = await signInWithGoogle();
       if (session?.user) {
-        rateLimiter.reset('login', 'google_oauth');
+        rateLimiter.reset('login', userKey);
         await onLoginSuccess?.(session.user);
       } else {
         const { data: currentAuth } = await supabase.auth.getSession();
         if (currentAuth?.session?.user) {
-          rateLimiter.reset('login', 'google_oauth');
+          rateLimiter.reset('login', userKey);
           await onLoginSuccess?.(currentAuth.session.user);
         }
       }
     } catch (err: unknown) {
-      rateLimiter.recordAttempt('login', 'google_oauth');
+      rateLimiter.recordAttempt('login', userKey);
       setFormError(getFriendlyAuthError(err, "Google sign-in didn't work. Please try again."));
     } finally {
       setGoogleLoading(false);
@@ -199,7 +202,64 @@ export default function LoginScreen({
     }
   });
 
-  const busy = loading || googleLoading;
+  const handleGuestLogin = useStableCallback(async () => {
+    if (requestInFlight.current) return;
+
+    setFormError('');
+    setFieldErrors({});
+    setNoAccountFound(false);
+    requestInFlight.current = true;
+    setGuestLoading(true);
+
+    try {
+      // 1. Try Supabase Anonymous Auth
+      const { data, error } = await supabase.auth.signInAnonymously();
+
+      if (!error && data.session?.user) {
+        await onLoginSuccess?.(data.session.user);
+        return;
+      }
+
+      // 2. Fallback: Auto-generate a unique guest account if anonymous auth is disabled
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      const uniqueGuestEmail = `guest_${Date.now()}_${rand}@mafia.local`;
+      const uniqueGuestUsername = `Guest_${rand}`;
+      const uniqueGuestPassword = `GuestPass#${Date.now()}`;
+
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: uniqueGuestEmail,
+        password: uniqueGuestPassword,
+        options: {
+          data: {
+            username: uniqueGuestUsername,
+          },
+        },
+      });
+
+      if (signUpError) {
+        setFormError(getFriendlyAuthError(signUpError, 'Failed to sign in as Guest. Please try creating an account.'));
+      } else if (signUpData.session?.user) {
+        await onLoginSuccess?.(signUpData.session.user);
+      } else if (signUpData.user) {
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+          email: uniqueGuestEmail,
+          password: uniqueGuestPassword,
+        });
+        if (signInData.session?.user) {
+          await onLoginSuccess?.(signInData.session.user);
+        } else {
+          setFormError(getFriendlyAuthError(signInErr, 'Failed to sign in as Guest.'));
+        }
+      }
+    } catch (err: unknown) {
+      setFormError(getFriendlyAuthError(err, 'Guest login error. Please try again.'));
+    } finally {
+      setGuestLoading(false);
+      requestInFlight.current = false;
+    }
+  });
+
+  const busy = loading || googleLoading || guestLoading;
 
   return (
     <View style={styles.container}>
@@ -300,6 +360,19 @@ export default function LoginScreen({
                 loading={googleLoading}
                 disabled={busy}
               />
+
+              <TouchableOpacity
+                style={styles.guestButton}
+                onPress={handleGuestLogin}
+                disabled={busy}
+                activeOpacity={0.8}
+              >
+                {guestLoading ? (
+                  <ActivityIndicator size="small" color="#fde68a" />
+                ) : (
+                  <Text style={styles.guestButtonText}>PLAY AS GUEST 🎭</Text>
+                )}
+              </TouchableOpacity>
             </AuthCard>
           </View>
 
@@ -445,6 +518,23 @@ const styles = StyleSheet.create({
   signUpText: {
     color: '#fde68a',
     fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  guestButton: {
+    width: '100%',
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(253, 230, 138, 0.4)',
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  guestButtonText: {
+    color: '#fde68a',
+    fontSize: 13,
     fontWeight: '900',
     letterSpacing: 1.2,
   },
