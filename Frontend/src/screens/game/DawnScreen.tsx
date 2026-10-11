@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { PlayerAvatar, GameShell, ROLE_COLOR, ROLE_LABEL, type PhaseScreenProps } from './gameUi';
+import { PlayerAvatar, GameShell, ChatPanel, ROLE_COLOR, ROLE_LABEL, type PhaseScreenProps } from './gameUi';
 import { colors, fontSize, radius, spacing } from '../../theme/tokens';
 import type { GameRole } from '../../types/database';
 
@@ -9,8 +9,8 @@ import type { GameRole } from '../../types/database';
  * phase (vote outcome). Reads the matching latest event banner from state and
  * shows who — if anyone — was lost, plus their role when revealed.
  */
-export default function DawnScreen({ state, narratorMessage }: PhaseScreenProps) {
-  const { game, players, latestNightResult, latestVoteResult, timeRemaining } = state;
+export default function DawnScreen({ state, currentUserId, narratorMessage }: PhaseScreenProps) {
+  const { game, players, latestNightResult, latestVoteResult, timeRemaining, messages, sendChat, activeChannel } = state;
   const isVote = game?.phase === 'result';
 
   const victimId = isVote
@@ -62,6 +62,22 @@ export default function DawnScreen({ state, narratorMessage }: PhaseScreenProps)
 
         <Text style={styles.headline}>{headline}</Text>
         <Text style={styles.sub}>{sub}</Text>
+
+        {/* Post-round comms: discussion begins right at the reveal. Living
+            players talk (text + voice via DayDiscussionScreen once the phase
+            flips); this window is the first-mover advantage to open the debate
+            about the round outcome. */}
+        {activeChannel === 'day' && (
+          <View style={styles.commsWrap}>
+            <ChatPanel
+              messages={messages}
+              currentUserId={currentUserId}
+              onSend={sendChat}
+              accent={accent}
+              placeholder="React to the verdict…"
+            />
+          </View>
+        )}
       </View>
     </GameShell>
   );
@@ -106,5 +122,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: 'center',
     marginTop: spacing.md,
+  },
+  commsWrap: {
+    alignSelf: 'stretch',
+    flex: 1,
+    marginTop: spacing.xl,
+    maxHeight: 300,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    padding: spacing.md,
   },
 });

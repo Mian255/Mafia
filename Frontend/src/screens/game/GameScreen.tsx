@@ -4,6 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import type { Room } from '../../lib/rooms';
 import { useGameState } from '../../hooks/useGameState';
 import { useNarrator } from '../../hooks/useNarrator';
+import { useSoundPrefs } from '../../hooks/useSoundPrefs';
+import { usePhaseAudio } from '../../lib/phaseAudio';
 import { colors, fontSize, spacing } from '../../theme/tokens';
 import { PrimaryButton } from './gameUi';
 import RoleRevealScreen from './RoleRevealScreen';
@@ -28,6 +30,8 @@ interface GameScreenProps {
 export default function GameScreen({ room, currentUserId, onExit }: GameScreenProps) {
   const state = useGameState(room.id, currentUserId);
   const narrator = useNarrator(state);
+  const soundPrefs = useSoundPrefs();
+  usePhaseAudio(state.game?.phase, soundPrefs);
   const { loading, error, game, isAlive } = state;
 
   // Loading / error / no-active-game fallbacks.

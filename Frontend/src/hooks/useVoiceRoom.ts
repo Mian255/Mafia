@@ -14,17 +14,32 @@ let livekitRn: typeof import('@livekit/react-native') | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   livekitRn = require('@livekit/react-native');
+  // Wires the native WebRTC engine (RTCPeerConnection, MediaStream, ...) into
+  // global scope so the `livekit-client` Room created below can actually
+  // publish/subscribe. Without this a development build still fails to connect.
+  livekitRn?.registerGlobals?.();
 } catch {
+  // Expo Go / missing native WebRTC module: voice is unavailable. The hook
+  // degrades to a non-publishing state instead of crashing the game screen.
   livekitRn = null;
 }
 
-const isWeb = Platform.OS === 'web' || typeof window !== 'undefined';
+// React Native defines a global `window`, so `typeof window !== 'undefined'`
+// is TRUE on mobile. Keying off Platform.OS only — otherwise the mobile code
+// path wrongly takes the web branch (and mic toggling misbehaves on device).
+const isWeb = Platform.OS === 'web';
 
 // Polyfill mediaDevices for React Native / Expo Go where native WebRTC is not linked
-// to prevent livekit-client from throwing "Cannot read property 'getUserMedia' of undefined"
+// to prevent livekit-client from throwing "Cannot read property 'getUserMedia' of undefined".
+// The rejection is self-handled (a no-op catch) so livekit's internal awaits —
+// which may not attach their own handler on every code path — never surface an
+// unhandled promise rejection crash banner; callers awaiting it still observe it.
 if (typeof navigator !== 'undefined' && !navigator.mediaDevices) {
+  const micUnavailable = new Error('WebRTC mic not available in current environment');
+  const rejectedMicPromise = Promise.reject(micUnavailable);
+  rejectedMicPromise.catch(() => {});
   (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
-    getUserMedia: () => Promise.reject(new Error('WebRTC mic not available in current environment')),
+    getUserMedia: () => rejectedMicPromise,
     enumerateDevices: () => Promise.resolve([]),
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -64,7 +79,7 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
   const [status, setStatus] = useState<VoiceRoomState['status']>(() =>
     livekitRn || isWeb ? 'idle' : 'connected'
   );
-  const [error] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(true);
   const [canPublish, setCanPublish] = useState(true);
   const [speakingIds, setSpeakingIds] = useState<string[]>([]);
@@ -86,11 +101,12 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
         setMuted(!res.can_publish);
         await room.connect(res.url, res.token);
         if (!cancelled) setStatus('connected');
-      } catch {
+      } catch (e) {
         if (cancelled) return;
-        // Graceful fallback for local dev / web mic: keep status active
-        setStatus('connected');
-        setCanPublish(true);
+        // Surface the real cause instead of faking a connection: with no native
+        // WebRTC (Expo Go) or a token/permission failure, voice cannot publish.
+        setStatus('error');
+        setError(e instanceof Error ? e.message : 'Voice connection failed.');
       }
     })();
 
@@ -120,27 +136,22 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
 
   const toggleMute = useCallback(() => {
     const nextMuted = !muted;
+    // Commit the user's intent first so the control never flickers back on its
+    // own; the previous auto-revert (setMuted(true)) on a rejected
+    // setMicrophoneEnabled was the "turning on and off does nothing" bug.
     setMuted(nextMuted);
 
     if (room.localParticipant) {
-      try {
-        void room.localParticipant.setMicrophoneEnabled(!nextMuted);
-      } catch {}
-    }
-
-    // Web MediaRecorder / getUserMedia mic control fallback
-    if (isWeb && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      if (!nextMuted) {
-        navigator.mediaDevices
-          .getUserMedia({ audio: true })
-          .then((stream) => {
-            localStreamRef.current = stream;
-          })
-          .catch(() => {});
-      } else if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
-        localStreamRef.current = null;
-      }
+      room.localParticipant
+        .setMicrophoneEnabled(!nextMuted)
+        .then(() => {
+          if (!nextMuted) setError(null);
+        })
+        .catch(() => {
+          // Mic hardware/permission unavailable. Keep the requested state and
+          // explain why rather than silently muting the user again.
+          setError('Microphone unavailable — check mic permission.');
+        });
     }
   }, [muted, room]);
 

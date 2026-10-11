@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import * as gameApi from '../lib/games';
 import type { GameRow, GamePlayerView, ChatMessage, GameEventRow } from '../lib/games';
-import type { ChatChannel, GameRole, Json } from '../types/database';
+import type { ChatChannel, GameRole, Json, NightStage } from '../types/database';
 
 export interface NightResult {
   round: number;
@@ -30,6 +30,8 @@ export interface GameStateValue {
   latestVoteResult: VoteResult | null;
   messages: ChatMessage[];
   activeChannel: ChatChannel | null;
+  /** The awake role during 'night' (mafia -> doctor -> detective), else null. */
+  nightStage: NightStage | null;
   submitNightAction: (targetSeatId: string) => Promise<void>;
   castVote: (targetSeatId: string | null) => Promise<void>;
   sendChat: (content: string) => Promise<void>;
@@ -88,14 +90,19 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
   const myRole = mySeat?.role ?? null;
   const isAlive = mySeat?.is_alive ?? false;
 
+  // Sequential night: which role is awake right now (mafia opens if unset).
+  const nightStage: NightStage | null =
+    game?.phase === 'night' ? (game.night_stage ?? 'mafia') : null;
+
   // Active chat channel for the current phase + my status (null = no chat now).
   const activeChannel = useMemo<ChatChannel | null>(() => {
     if (!game || !mySeat) return null;
     if (game.phase === 'game_over') return null;
     if (!mySeat.is_alive) return 'ghost';
-    if (game.phase === 'night') return myRole === 'mafia' ? 'mafia' : null;
+    // Mafia may scheme only while the mafia are actually awake (their night stage).
+    if (game.phase === 'night') return myRole === 'mafia' && nightStage === 'mafia' ? 'mafia' : null;
     return 'day';
-  }, [game, mySeat, myRole]);
+  }, [game, mySeat, myRole, nightStage]);
 
   // Refs mirror the latest values so the always-on timer/subscriptions and the
   // action callbacks can read them without re-subscribing (Lobby's pattern).
@@ -372,6 +379,7 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
     latestVoteResult,
     messages,
     activeChannel,
+    nightStage,
     submitNightAction,
     castVote,
     sendChat,

@@ -26,22 +26,36 @@ export default function VoiceBar({ channel, ids, compact = false }: VoiceBarProp
       )}
 
       <Text style={styles.label}>
-        {voice.muted ? 'VOICE OFF' : 'VOICE LIVE'}
+        {voice.status === 'error'
+          ? 'VOICE DOWN'
+          : voice.muted
+            ? 'VOICE OFF'
+            : 'VOICE LIVE'}
       </Text>
 
-      {voice.participants.length > 0 && (
+      {voice.error ? (
+        <Text style={styles.errorText} numberOfLines={1}>
+          {voice.error}
+        </Text>
+      ) : voice.participants.length > 0 ? (
         <Text style={styles.speakers} numberOfLines={1}>
           {voice.participants.map((p) => `${p.isSpeaking ? '🔊 ' : ''}${p.name}`).join('  ')}
         </Text>
+      ) : (
+        <Text style={styles.speakers} numberOfLines={1} />
       )}
 
-      <TouchableOpacity
-        style={[styles.micButton, voice.muted ? styles.micMuted : styles.micLive]}
-        onPress={voice.toggleMute}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        <Text style={styles.micText}>{voice.muted ? '🔇 MIC OFF' : '🎤 MIC ON'}</Text>
-      </TouchableOpacity>
+      {voice.canPublish ? (
+        <TouchableOpacity
+          style={[styles.micButton, voice.muted ? styles.micMuted : styles.micLive]}
+          onPress={voice.toggleMute}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.micText}>{voice.muted ? '🔇 MIC OFF' : '🎤 MIC ON'}</Text>
+        </TouchableOpacity>
+      ) : (
+        <Text style={styles.listenOnly}>LISTEN ONLY</Text>
+      )}
     </View>
   );
 }

@@ -1,76 +1,61 @@
 import * as Speech from 'expo-speech';
-import { Platform } from 'react-native';
 
 /**
- * Text-to-Speech Narrator voice synthesizer for Mafia game phase transitions.
- * Operates across Native (Expo Speech) and Web (SpeechSynthesis API).
+ * Text-to-Speech Narrator for Mafia game phase transitions.
+ *
+ * Mobile-only by design: this uses expo-speech (the native Android/iOS TTS
+ * engine) exclusively. The Web SpeechSynthesis path was removed because the
+ * game targets a development build on device and the browser voice was
+ * inconsistent with the mobile narrator.
  */
-/**
- * Auto-unlock Web SpeechSynthesis audio on first user gesture.
- * Browsers block SpeechSynthesis.speak() until a user gesture occurs in the window.
- */
-if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  const unlockAudio = () => {
-    try {
-      window.speechSynthesis.resume();
-      const dummy = new SpeechSynthesisUtterance('');
-      dummy.volume = 0;
-      window.speechSynthesis.speak(dummy);
-    } catch {}
-    window.removeEventListener('pointerdown', unlockAudio);
-    window.removeEventListener('keydown', unlockAudio);
-    window.removeEventListener('touchstart', unlockAudio);
-  };
-  window.addEventListener('pointerdown', unlockAudio, { once: true });
-  window.addEventListener('keydown', unlockAudio, { once: true });
-  window.addEventListener('touchstart', unlockAudio, { once: true });
+
+// expo-speech clips the final word on several Android TTS engines unless the
+// utterance ends in sentence punctuation with a short trailing breath. We also
+// must not call Speech.stop() and Speech.speak() in the same tick — that race
+// drops/truncates the utterance. prepareForTts normalises the text; the speak
+// defer in speakNarrator handles the timing.
+function prepareForTts(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  const punctuated = /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+  return `${punctuated}  `;
 }
 
 export function speakNarrator(text: string, onDone?: () => void) {
-  if (!text) return;
-
-  // Web Speech API fallback
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    try {
-      window.speechSynthesis.resume();
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.92;
-      utterance.pitch = 0.88; // Deep dramatic narrator pitch
-      if (onDone) utterance.onend = onDone;
-      utterance.onerror = () => {
-        if (onDone) onDone();
-      };
-      window.speechSynthesis.speak(utterance);
-      return;
-    } catch (e) {
-      console.warn('Web Speech API error:', e);
-    }
+  const clean = prepareForTts(text);
+  if (!clean) {
+    if (onDone) onDone();
+    return;
   }
 
-  // Native Expo Speech
   try {
     Speech.stop();
-    Speech.speak(text, {
-      language: 'en',
-      pitch: 0.88,
-      rate: 0.92,
-      onDone,
-    });
-  } catch (err) {
-    console.warn('Expo Speech error:', err);
+  } catch {
+    // ignore — nothing was speaking
   }
+
+  // One-frame deferral so the engine has settled after stop() before the new
+  // utterance starts; calling speak() synchronously after stop() is the main
+  // cause of the narrator cutting off before the last word.
+  setTimeout(() => {
+    try {
+      Speech.speak(clean, {
+        language: 'en',
+        pitch: 0.88, // Deep dramatic narrator pitch
+        rate: 0.9,
+        onDone,
+        onError: () => {
+          if (onDone) onDone();
+        },
+      });
+    } catch {
+      if (onDone) onDone();
+    }
+  }, 60);
 }
 
-/** Stops any active narrator speech */
+/** Stops any active narrator speech. */
 export function stopNarrator() {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    try {
-      window.speechSynthesis.cancel();
-    } catch {
-      // ignore
-    }
-  }
   try {
     Speech.stop();
   } catch {
