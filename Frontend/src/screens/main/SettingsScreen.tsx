@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -21,6 +22,7 @@ import { supabase } from '../../lib/supabase';
 import { deleteAccount } from '../../lib/auth';
 import { validateNewPassword, getFriendlyAuthError, MIN_PASSWORD_LENGTH } from '../../lib/authHelpers';
 import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
+import { AVAILABLE_PHOTOS, PHOTO_SOURCES, resolveAvatarImage } from '../../lib/avatars';
 import { SnapchatPullRefreshScreen } from '../../components/refresh';
 
 interface SettingsScreenProps {
@@ -471,7 +473,7 @@ export default function SettingsScreen({
   };
 
   const initialLetter = (username || 'P').charAt(0).toUpperCase();
-  const activeAvatarImage = selectedAvatar && CHARACTER_IMAGES[selectedAvatar as RoleId];
+  const activeAvatarImage = resolveAvatarImage(selectedAvatar);
 
   return (
     <View style={styles.container}>
@@ -827,51 +829,86 @@ export default function SettingsScreen({
                   Select your in-game persona badge or default letter.
                 </Text>
 
-                <View style={styles.modalAvatarGrid}>
-                  {/* Default Letter Option */}
-                  <TouchableOpacity
-                    style={[
-                      styles.avatarGridItem,
-                      !selectedAvatar && styles.avatarGridItemSelected,
-                    ]}
-                    onPress={() => handleSelectAvatar(null)}
-                  >
-                    <View style={styles.modalInitialCircle}>
-                      <Text style={styles.modalInitialLetterText}>{initialLetter}</Text>
-                    </View>
-                    {!selectedAvatar && (
-                      <View style={styles.modalCheckBadge}>
-                        <Text style={styles.modalCheckText}>✓</Text>
+                <ScrollView
+                  style={styles.modalScrollArea}
+                  contentContainerStyle={styles.modalScrollContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  <View style={styles.modalAvatarGrid}>
+                    {/* Default Letter Option */}
+                    <TouchableOpacity
+                      style={[
+                        styles.avatarGridItem,
+                        !selectedAvatar && styles.avatarGridItemSelected,
+                      ]}
+                      onPress={() => handleSelectAvatar(null)}
+                    >
+                      <View style={styles.modalInitialCircle}>
+                        <Text style={styles.modalInitialLetterText}>{initialLetter}</Text>
                       </View>
-                    )}
-                  </TouchableOpacity>
+                      {!selectedAvatar && (
+                        <View style={styles.modalCheckBadge}>
+                          <Text style={styles.modalCheckText}>✓</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
 
-                  {/* Character Avatars */}
-                  {AVAILABLE_AVATARS.map((avatar) => {
-                    const isSelected = selectedAvatar === avatar.id;
-                    return (
-                      <TouchableOpacity
-                        key={avatar.id}
-                        style={[
-                          styles.avatarGridItem,
-                          isSelected && styles.avatarGridItemSelected,
-                        ]}
-                        onPress={() => handleSelectAvatar(avatar.id)}
-                      >
-                        <Image
-                          source={avatar.image}
-                          style={styles.modalAvatarImg}
-                          resizeMode="cover"
-                        />
-                        {isSelected && (
-                          <View style={styles.modalCheckBadge}>
-                            <Text style={styles.modalCheckText}>✓</Text>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                    {/* Character Avatars */}
+                    {AVAILABLE_AVATARS.map((avatar) => {
+                      const isSelected = selectedAvatar === avatar.id;
+                      return (
+                        <TouchableOpacity
+                          key={avatar.id}
+                          style={[
+                            styles.avatarGridItem,
+                            isSelected && styles.avatarGridItemSelected,
+                          ]}
+                          onPress={() => handleSelectAvatar(avatar.id)}
+                        >
+                          <Image
+                            source={avatar.image}
+                            style={styles.modalAvatarImg}
+                            resizeMode="cover"
+                          />
+                          {isSelected && (
+                            <View style={styles.modalCheckBadge}>
+                              <Text style={styles.modalCheckText}>✓</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Personal Photo Avatars */}
+                  <Text style={styles.modalSectionLabel}>AVATARS</Text>
+                  <View style={styles.modalAvatarGrid}>
+                    {AVAILABLE_PHOTOS.map((photo) => {
+                      const isSelected = selectedAvatar === photo;
+                      return (
+                        <TouchableOpacity
+                          key={photo}
+                          style={[
+                            styles.avatarGridItem,
+                            isSelected && styles.avatarGridItemSelected,
+                          ]}
+                          onPress={() => handleSelectAvatar(photo)}
+                        >
+                          <Image
+                            source={PHOTO_SOURCES[photo]}
+                            style={styles.modalAvatarImg}
+                            resizeMode="cover"
+                          />
+                          {isSelected && (
+                            <View style={styles.modalCheckBadge}>
+                              <Text style={styles.modalCheckText}>✓</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
 
                 {isUpdatingAvatar && (
                   <View style={styles.updatingIndicatorWrap}>
@@ -1438,11 +1475,26 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 340,
+    maxHeight: '82%',
     backgroundColor: '#101522',
     borderRadius: 20,
     borderWidth: 1.5,
     borderColor: '#243046',
     padding: 20,
+  },
+  modalScrollArea: {
+    flexGrow: 0,
+  },
+  modalScrollContent: {
+    paddingBottom: 4,
+  },
+  modalSectionLabel: {
+    color: '#fde68a',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    alignSelf: 'flex-start',
+    marginBottom: 10,
   },
   modalHeaderRow: {
     flexDirection: 'row',
