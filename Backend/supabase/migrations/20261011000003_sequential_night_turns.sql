@@ -267,17 +267,21 @@ BEGIN
                 CROSS JOIN LATERAL (
                     SELECT t.tid
                     FROM (
-                        SELECT gp.id AS tid
-                        FROM public.game_players gp
-                        WHERE gp.game_id = p_game_id AND gp.is_alive
-                              AND gp.role <> 'mafia' AND gp.user_id IS NOT NULL
-                        ORDER BY random() LIMIT 1
+                        (
+                            SELECT gp.id AS tid
+                            FROM public.game_players gp
+                            WHERE gp.game_id = p_game_id AND gp.is_alive
+                                  AND gp.role <> 'mafia' AND gp.user_id IS NOT NULL
+                            ORDER BY random() LIMIT 1
+                        )
                         UNION ALL
-                        SELECT gp.id
-                        FROM public.game_players gp
-                        WHERE gp.game_id = p_game_id AND gp.is_alive
-                              AND gp.role <> 'mafia' AND gp.user_id IS NULL
-                        ORDER BY random() LIMIT 1
+                        (
+                            SELECT gp.id
+                            FROM public.game_players gp
+                            WHERE gp.game_id = p_game_id AND gp.is_alive
+                                  AND gp.role <> 'mafia' AND gp.user_id IS NULL
+                            ORDER BY random() LIMIT 1
+                        )
                     ) t
                     LIMIT 1
                 ) pick

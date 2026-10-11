@@ -131,19 +131,25 @@ BEGIN
             CROSS JOIN LATERAL (
                 SELECT t.tid
                 FROM (
-                    -- Prefer human seats: one random human (weight 3 lottery =
-                    -- draw humans first; fall back to any non-mafia seat).
-                    SELECT gp.id AS tid
-                    FROM public.game_players gp
-                    WHERE gp.game_id = p_game_id AND gp.is_alive
-                          AND gp.role <> 'mafia' AND gp.user_id IS NOT NULL
-                    ORDER BY random() LIMIT 1
+                    -- Prefer human seats: draw a random human first, else fall
+                    -- back to any non-mafia bot seat. Each arm carries its own
+                    -- ORDER BY/LIMIT, so it MUST be parenthesised (Postgres
+                    -- rejects bare ORDER BY/LIMIT on a UNION ALL branch).
+                    (
+                        SELECT gp.id AS tid
+                        FROM public.game_players gp
+                        WHERE gp.game_id = p_game_id AND gp.is_alive
+                              AND gp.role <> 'mafia' AND gp.user_id IS NOT NULL
+                        ORDER BY random() LIMIT 1
+                    )
                     UNION ALL
-                    SELECT gp.id
-                    FROM public.game_players gp
-                    WHERE gp.game_id = p_game_id AND gp.is_alive
-                          AND gp.role <> 'mafia' AND gp.user_id IS NULL
-                    ORDER BY random() LIMIT 1
+                    (
+                        SELECT gp.id
+                        FROM public.game_players gp
+                        WHERE gp.game_id = p_game_id AND gp.is_alive
+                              AND gp.role <> 'mafia' AND gp.user_id IS NULL
+                        ORDER BY random() LIMIT 1
+                    )
                 ) t
                 LIMIT 1
             ) pick
