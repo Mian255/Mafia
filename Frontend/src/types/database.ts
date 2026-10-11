@@ -16,6 +16,10 @@ export type GamePhase =
   | 'result'
   | 'game_over';
 
+// Sequential night turns (20261011000003_sequential_night_turns.sql): while the
+// phase is 'night', exactly one role is awake at a time, in this order.
+export type NightStage = 'mafia' | 'doctor' | 'detective';
+
 export type RoomStatus = 'lobby' | 'in_progress' | 'completed' | 'abandoned';
 export type FriendRequestStatus = 'pending' | 'accepted' | 'declined' | 'cancelled';
 export type ChatChannel = 'lobby' | 'day' | 'mafia' | 'ghost';
@@ -252,6 +256,7 @@ export interface Database {
           phase: GamePhase;
           round_number: number;
           phase_deadline: string | null;
+          night_stage: NightStage | null;
           winner: GameWinner;
           created_at: string;
           updated_at: string;
@@ -262,6 +267,7 @@ export interface Database {
           phase?: GamePhase;
           round_number?: number;
           phase_deadline?: string | null;
+          night_stage?: NightStage | null;
           winner?: GameWinner;
           created_at?: string;
           updated_at?: string;
@@ -270,6 +276,7 @@ export interface Database {
           phase?: GamePhase;
           round_number?: number;
           phase_deadline?: string | null;
+          night_stage?: NightStage | null;
           winner?: GameWinner;
           updated_at?: string;
         };

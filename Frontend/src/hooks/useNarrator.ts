@@ -18,12 +18,13 @@ export interface NarratorState {
  * 5. Game Over / Faction Victory.
  */
 export function useNarrator(state: GameStateValue): NarratorState {
-  const { game, myRole, latestNightResult, latestVoteResult } = state;
+  const { game, nightStage, latestNightResult, latestVoteResult } = state;
   const [currentMessage, setCurrentMessage] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
   const prevPhaseRef = useRef<string | null>(null);
   const prevRoundRef = useRef<number | null>(null);
+  const prevStageRef = useRef<string | null>(null);
 
   const speak = (text: string) => {
     setTimeout(() => {
@@ -40,11 +41,13 @@ export function useNarrator(state: GameStateValue): NarratorState {
 
     const phaseChanged = prevPhaseRef.current !== game.phase;
     const roundChanged = prevRoundRef.current !== game.round_number;
+    const stageChanged = prevStageRef.current !== nightStage;
 
     prevPhaseRef.current = game.phase;
     prevRoundRef.current = game.round_number;
+    prevStageRef.current = nightStage;
 
-    if (!phaseChanged && !roundChanged) return;
+    if (!phaseChanged && !roundChanged && !stageChanged) return;
 
     // Handle phase transitions
     switch (game.phase) {
@@ -53,17 +56,17 @@ export function useNarrator(state: GameStateValue): NarratorState {
         break;
       }
       case 'night': {
-        let msg = 'Night falls over the town. Everyone, close your eyes.';
-        if (myRole === 'mafia') {
-          msg += ' Mafia, open your eyes and choose your target to eliminate.';
-        } else if (myRole === 'doctor') {
-          msg += ' Doctor, open your eyes and select someone to protect tonight.';
-        } else if (myRole === 'detective') {
-          msg += ' Detective, open your eyes and select a player to investigate.';
-        } else {
-          msg += ' Special roles are making their moves under darkness.';
+        // Sequential night: narrate whichever role the narrator is waking now.
+        const stage = nightStage ?? 'mafia';
+        if (stage === 'mafia') {
+          speak(
+            'Night falls over the town. Everyone, close your eyes. Mafia, open your eyes and choose your target to eliminate.'
+          );
+        } else if (stage === 'doctor') {
+          speak('Mafia, close your eyes. Doctor, open your eyes and choose someone to protect tonight.');
+        } else if (stage === 'detective') {
+          speak('Doctor, close your eyes. Detective, open your eyes and choose a suspect to investigate.');
         }
-        speak(msg);
         break;
       }
       case 'dawn': {
@@ -103,11 +106,19 @@ export function useNarrator(state: GameStateValue): NarratorState {
       default:
         break;
     }
+    // NOTE: no per-run cleanup here. This effect re-runs on every `game` /
+    // result update (see deps), so a stopNarrator() cleanup would cut the
+    // narrator off mid-sentence on the next realtime tick — the root cause of
+    // the "last word never spoken" bug. Speech is stopped when a new line is
+    // spoken (speak() calls Speech.stop()) and once on unmount, below.
+  }, [game, game?.phase, game?.round_number, game?.winner, nightStage, latestNightResult, latestVoteResult]);
 
+  // Stop any narration exactly once, when the game screen unmounts.
+  useEffect(() => {
     return () => {
       stopNarrator();
     };
-  }, [game, game?.phase, game?.round_number, game?.winner, myRole, latestNightResult, latestVoteResult]);
+  }, []);
 
   return {
     currentMessage,

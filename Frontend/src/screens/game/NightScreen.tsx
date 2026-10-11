@@ -2,13 +2,20 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { GamePlayerView } from '../../lib/games';
 import VoiceBar from '../../components/VoiceBar';
+import { ChatPanel, GameShell, PrimaryButton, ROLE_COLOR, SeatTile, type PhaseScreenProps } from './gameUi';
 import { colors, fontSize, radius, spacing } from '../../theme/tokens';
-import { GameShell, PrimaryButton, ROLE_COLOR, SeatTile, type PhaseScreenProps } from './gameUi';
 
 const ACTION_PROMPT: Record<string, string> = {
   mafia: 'Choose a citizen to eliminate.',
   doctor: 'Choose someone to protect tonight.',
   detective: 'Choose someone to investigate.',
+};
+
+// Human label for whoever is currently awake, shown in the waiting state.
+const STAGE_ACTOR: Record<string, string> = {
+  mafia: 'The Mafia',
+  doctor: 'The Doctor',
+  detective: 'The Detective',
 };
 
 /**
@@ -17,9 +24,11 @@ const ACTION_PROMPT: Record<string, string> = {
  * the private get_investigation_result RPC.
  */
 export default function NightScreen({ state, currentUserId, narratorMessage, speakCustom }: PhaseScreenProps) {
-  const { game, myRole, mySeat, players, timeRemaining, submitNightAction, getInvestigation } = state;
+  const { game, myRole, mySeat, players, timeRemaining, submitNightAction, getInvestigation, messages, sendChat, nightStage } = state;
   const accent = myRole ? ROLE_COLOR[myRole] : colors.detective;
   const canAct = mySeat?.is_alive === true && (myRole === 'mafia' || myRole === 'doctor' || myRole === 'detective');
+  // Sequential turns: you may act only while the narrator has woken YOUR role.
+  const myTurn = canAct && nightStage != null && nightStage === myRole;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -73,8 +82,13 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
 
   return (
     <GameShell phaseLabel="Night" round={game?.round_number} timeRemaining={timeRemaining} accent={accent} narratorMessage={narratorMessage}>
-      {/* Mafia coordinate by voice at night (MAF-073); other roles see nothing. */}
-      {game && myRole === 'mafia' && <View style={styles.voiceWrap}><VoiceBar channel="mafia" ids={{ gameId: game.id }} compact /></View>}
+      {/* Mafia coordinate by voice AND secret text chat, but only during their
+          own night stage (once they close their eyes the channel goes quiet). */}
+      {game && myRole === 'mafia' && nightStage === 'mafia' && (
+        <View style={styles.commsWrap}>
+          <VoiceBar channel="mafia" ids={{ gameId: game.id }} compact />
+        </View>
+      )}
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {myRole === 'detective' && investigation !== null && (
           <View style={[styles.resultBanner, { borderColor: investigation ? colors.mafia : colors.doctor }]}>
@@ -85,7 +99,7 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
           </View>
         )}
 
-        {canAct ? (
+        {myTurn ? (
           <>
             <Text style={styles.prompt}>{ACTION_PROMPT[myRole ?? '']}</Text>
             {submitted && (
@@ -110,13 +124,31 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
           <View style={styles.waitBlock}>
             <Text style={styles.waitTitle}>The town sleeps…</Text>
             <Text style={styles.waitText}>
-              Special roles are making their move under the cover of darkness. Sit tight until dawn.
+              {nightStage
+                ? `${STAGE_ACTOR[nightStage]} is making their move. Sit tight until the narrator calls you.`
+                : 'Special roles are making their move under the cover of darkness. Sit tight until dawn.'}
             </Text>
+          </View>
+        )}
+
+        {/* Secret mafia text chat at night: living mafia coordinate like in
+            tabletop Mafia, alongside the voice bar. Realtime stream comes from
+            useGameState (activeChannel === 'mafia' during night for mafia). */}
+        {myRole === 'mafia' && nightStage === 'mafia' && (
+          <View style={styles.nightChatWrap}>
+            <Text style={styles.nightChatLabel}>MAFIA CHANNEL — SECRET</Text>
+            <ChatPanel
+              messages={messages}
+              currentUserId={currentUserId}
+              onSend={sendChat}
+              accent="#ef4444"
+              placeholder="Plan quietly with your team…"
+            />
           </View>
         )}
       </ScrollView>
 
-      {canAct && (
+      {myTurn && (
         <View style={styles.footer}>
           <PrimaryButton
             label={submitting ? 'Submitting…' : submitted ? 'Change Choice' : 'Confirm'}
@@ -134,9 +166,25 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.xl,
   },
-  voiceWrap: {
+  commsWrap: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
+  },
+  nightChatWrap: {
+    marginTop: spacing.xl,
+    height: 260,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(239, 68, 68, 0.06)',
+    padding: spacing.md,
+  },
+  nightChatLabel: {
+    color: '#ef4444',
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: spacing.sm,
   },
   prompt: {
     color: colors.textSecondary,

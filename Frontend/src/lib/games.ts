@@ -114,6 +114,7 @@ function mapActionError(rawMessage: string, fallback: string): string {
   if (message.includes('actor_not_alive') || message.includes('voter_not_alive'))
     return 'Eliminated players cannot act.';
   if (message.includes('no_night_action')) return 'Your role has no night action.';
+  if (message.includes('not_your_turn')) return "It's not your turn yet — wait for the narrator to wake your role.";
   if (message.includes('target_not_alive')) return 'That player is already eliminated.';
   if (message.includes('invalid_target')) return 'That is not a valid target.';
   if (message.includes('not_participant')) return 'You are not part of this game.';
