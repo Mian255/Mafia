@@ -21,7 +21,6 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { deleteAccount } from '../../lib/auth';
 import { validateNewPassword, getFriendlyAuthError, MIN_PASSWORD_LENGTH } from '../../lib/authHelpers';
-import { CHARACTER_IMAGES, RoleId } from '../../components/RoleCard';
 import { AVAILABLE_PHOTOS, PHOTO_SOURCES, resolveAvatarImage } from '../../lib/avatars';
 import { SnapchatPullRefreshScreen } from '../../components/refresh';
 
@@ -30,14 +29,6 @@ interface SettingsScreenProps {
   onLogout?: () => void;
   onProfileUpdated?: () => void;
 }
-
-// Avatars as pure visual identity choices
-const AVAILABLE_AVATARS: { id: RoleId; image: any }[] = [
-  { id: 'civilian', image: CHARACTER_IMAGES.civilian },
-  { id: 'detective', image: CHARACTER_IMAGES.detective },
-  { id: 'doctor', image: CHARACTER_IMAGES.doctor },
-  { id: 'mafia', image: CHARACTER_IMAGES.mafia },
-];
 
 // Single JSON blob for local-only user preferences (audio / haptics).
 const PREFS_STORAGE_KEY = 'settings:prefs';
@@ -826,7 +817,7 @@ export default function SettingsScreen({
                 </View>
 
                 <Text style={styles.modalSubtitle}>
-                  Select your in-game persona badge or default letter.
+                  Choose your in-game profile avatar.
                 </Text>
 
                 <ScrollView
@@ -834,54 +825,6 @@ export default function SettingsScreen({
                   contentContainerStyle={styles.modalScrollContent}
                   showsVerticalScrollIndicator={false}
                 >
-                  <View style={styles.modalAvatarGrid}>
-                    {/* Default Letter Option */}
-                    <TouchableOpacity
-                      style={[
-                        styles.avatarGridItem,
-                        !selectedAvatar && styles.avatarGridItemSelected,
-                      ]}
-                      onPress={() => handleSelectAvatar(null)}
-                    >
-                      <View style={styles.modalInitialCircle}>
-                        <Text style={styles.modalInitialLetterText}>{initialLetter}</Text>
-                      </View>
-                      {!selectedAvatar && (
-                        <View style={styles.modalCheckBadge}>
-                          <Text style={styles.modalCheckText}>✓</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-
-                    {/* Character Avatars */}
-                    {AVAILABLE_AVATARS.map((avatar) => {
-                      const isSelected = selectedAvatar === avatar.id;
-                      return (
-                        <TouchableOpacity
-                          key={avatar.id}
-                          style={[
-                            styles.avatarGridItem,
-                            isSelected && styles.avatarGridItemSelected,
-                          ]}
-                          onPress={() => handleSelectAvatar(avatar.id)}
-                        >
-                          <Image
-                            source={avatar.image}
-                            style={styles.modalAvatarImg}
-                            resizeMode="cover"
-                          />
-                          {isSelected && (
-                            <View style={styles.modalCheckBadge}>
-                              <Text style={styles.modalCheckText}>✓</Text>
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  {/* Personal Photo Avatars */}
-                  <Text style={styles.modalSectionLabel}>AVATARS</Text>
                   <View style={styles.modalAvatarGrid}>
                     {AVAILABLE_PHOTOS.map((photo) => {
                       const isSelected = selectedAvatar === photo;
@@ -1487,14 +1430,6 @@ const styles = StyleSheet.create({
   },
   modalScrollContent: {
     paddingBottom: 4,
-  },
-  modalSectionLabel: {
-    color: '#fde68a',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    alignSelf: 'flex-start',
-    marginBottom: 10,
   },
   modalHeaderRow: {
     flexDirection: 'row',
