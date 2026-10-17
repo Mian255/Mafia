@@ -20,6 +20,9 @@ yarn-error.*
 
 # OS & Cache
 .agent-cache/
+.kilo/
+.freebuff/
+.claude/
 .DS_Store
 Thumbs.db
 
