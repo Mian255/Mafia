@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { GamePlayerView } from '../../lib/games';
 import VoiceBar from '../../components/VoiceBar';
+import NightMaze from '../../components/NightMaze';
 import { ChatPanel, GameShell, PrimaryButton, ROLE_COLOR, SeatTile, type PhaseScreenProps } from './gameUi';
 import { colors, fontSize, radius, spacing } from '../../theme/tokens';
 
@@ -22,6 +23,7 @@ const STAGE_ACTOR: Record<string, string> = {
  * Special roles (Mafia, Doctor, Detective) can plan, inspect the town, and take their action.
  * Mafias can communicate privately via text and voice throughout the night.
  * Detective immediately sees the verification of their suspect upon confirming their choice.
+ * Civilians and waiting players can watch the animated 2D Night Maze so they never get bored!
  */
 export default function NightScreen({ state, currentUserId, narratorMessage, speakCustom }: PhaseScreenProps) {
   const {
@@ -42,6 +44,8 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
   const isSpecialRole = mySeat?.is_alive === true && (myRole === 'mafia' || myRole === 'doctor' || myRole === 'detective');
   const myTurn = isSpecialRole && nightStage != null && nightStage === myRole;
 
+  // Default to 'action' if it's currently my turn to pick, else 'maze' for fun spectating
+  const [viewMode, setViewMode] = useState<'maze' | 'action'>(() => (myTurn ? 'action' : 'maze'));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -143,8 +147,37 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
           </View>
         )}
 
-        {/* When it IS my turn: Active selection grid and action controls */}
-        {myTurn ? (
+        {/* View Switcher: 2D Animated Sleepwalking Maze vs Town / Role Action */}
+        <View style={styles.viewToggleBar}>
+          <TouchableOpacity
+            style={[styles.toggleBtn, viewMode === 'maze' && styles.toggleBtnActive]}
+            onPress={() => setViewMode('maze')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.toggleBtnText, viewMode === 'maze' && styles.toggleBtnTextActive]}>
+              🗺️ Night Maze Spectate
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toggleBtn, viewMode === 'action' && styles.toggleBtnActive]}
+            onPress={() => setViewMode('action')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.toggleBtnText, viewMode === 'action' && styles.toggleBtnTextActive]}>
+              {myTurn ? '🎯 Select Target' : isSpecialRole ? '📋 Town Roster' : '👥 Sleeping Town'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {viewMode === 'maze' ? (
+          <NightMaze
+            key={players.map((p) => `${p.id}:${p.is_alive}`).join(',')}
+            players={players}
+            currentUserId={currentUserId}
+          />
+        ) : myTurn ? (
+          /* When it IS my turn: Active selection grid and action controls */
           <View style={styles.actionSection}>
             <Text style={styles.prompt}>{ACTION_PROMPT[myRole ?? '']}</Text>
             {submitted && (
@@ -419,5 +452,35 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.surfaceAlt,
+  },
+  viewToggleBar: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    backgroundColor: '#0d1424',
+    padding: 4,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  toggleBtn: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    borderRadius: radius.sm,
+  },
+  toggleBtnActive: {
+    backgroundColor: '#1e293b',
+    borderColor: '#38bdf8',
+    borderWidth: 1,
+  },
+  toggleBtnText: {
+    color: colors.textDim,
+    fontSize: fontSize.xs,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  toggleBtnTextActive: {
+    color: '#ffffff',
   },
 });
