@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Platform, StatusBar as RNStatusBar, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CHARACTERS_ASPECT_RATIO = 1042 / 499;
 
@@ -21,6 +22,7 @@ export interface AuthLayout {
 
 export function useAuthLayout(compactCharacters = false): AuthLayout {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   return useMemo(() => {
     const scale = clamp(width / 390, 0.82, 1.35);
@@ -39,8 +41,8 @@ export function useAuthLayout(compactCharacters = false): AuthLayout {
     );
 
     return {
-      paddingTop: statusBarInset + topGap,
-      paddingBottom: clamp(height * 0.025, 12, 32),
+      paddingTop: Math.max(statusBarInset + topGap, insets.top + 8),
+      paddingBottom: Math.max(insets.bottom + 28, clamp(height * 0.04, 32, 60)),
       paddingHorizontal: clamp(width * 0.06, 16, 40),
       titleFontSize,
       titleLetterSpacing: Math.round(titleFontSize * 0.16),
@@ -51,5 +53,5 @@ export function useAuthLayout(compactCharacters = false): AuthLayout {
       charactersWidth,
       charactersHeight: Math.round(charactersWidth / CHARACTERS_ASPECT_RATIO),
     };
-  }, [width, height, compactCharacters]);
+  }, [width, height, compactCharacters, insets]);
 }

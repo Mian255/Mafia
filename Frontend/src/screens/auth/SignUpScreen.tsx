@@ -465,11 +465,15 @@ export default function SignUpScreen({ onNavigateToLogin, onSignUpSuccess }: Sig
           </View>
 
           {/* Footer Navigation Link */}
-          <View style={styles.footerContainer}>
+          <View style={[styles.footerContainer, { paddingBottom: Math.max(layout.paddingBottom * 0.5, 20) }]}>
             <Text style={styles.haveAccountText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
               Already have an account?
             </Text>
-            <TouchableOpacity onPress={onNavigateToLogin} disabled={busy} activeOpacity={0.7}>
+            <TouchableOpacity
+              onPress={onNavigateToLogin}
+              activeOpacity={0.7}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+            >
               <Text style={styles.logInText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                 LOG IN
               </Text>

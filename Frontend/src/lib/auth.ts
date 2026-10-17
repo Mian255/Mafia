@@ -37,6 +37,10 @@ export function parseRedirectParams(url: string): Record<string, string> {
   return params;
 }
 
+let inFlightExchange: Promise<Session | null> | null = null;
+let lastExchangedCode: string | null = null;
+let lastExchangedSession: Session | null = null;
+
 export async function createSessionFromUrl(url: string): Promise<Session | null> {
   const params = parseRedirectParams(url);
 
@@ -54,15 +58,49 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
   }
 
   if (params.code) {
-    try {
-      const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
-      if (error) throw error;
-      return data.session;
-    } catch (exchangeError) {
-      const { data: currentSession } = await supabase.auth.getSession();
-      if (currentSession?.session) return currentSession.session;
-      throw exchangeError;
+    // If this code was already successfully exchanged in the current burst, return that session
+    if (params.code === lastExchangedCode && lastExchangedSession) {
+      return lastExchangedSession;
     }
+
+    if (inFlightExchange) {
+      try {
+        return await inFlightExchange;
+      } catch {
+        // Fall back to direct exchange below
+      }
+    }
+
+    inFlightExchange = (async () => {
+      try {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
+        if (error) {
+          // If code was already exchanged by the other listener (Linking vs WebBrowser), check active session
+          const { data: cur } = await supabase.auth.getSession();
+          if (cur?.session) {
+            lastExchangedCode = params.code;
+            lastExchangedSession = cur.session;
+            return cur.session;
+          }
+          throw error;
+        }
+        lastExchangedCode = params.code;
+        lastExchangedSession = data.session;
+        return data.session;
+      } catch (exchangeError) {
+        const { data: currentSession } = await supabase.auth.getSession();
+        if (currentSession?.session) {
+          lastExchangedCode = params.code;
+          lastExchangedSession = currentSession.session;
+          return currentSession.session;
+        }
+        throw exchangeError;
+      } finally {
+        inFlightExchange = null;
+      }
+    })();
+
+    return await inFlightExchange;
   }
 
   const { data: currentSession } = await supabase.auth.getSession();
@@ -106,6 +144,7 @@ export async function signInWithGoogle(): Promise<Session | null> {
     if (res.type === "success" && res.url) {
       return await createSessionFromUrl(res.url);
     }
+    // Deep link may have already exchanged session in App.tsx
     const { data: currentSession } = await supabase.auth.getSession();
     if (currentSession?.session) {
       return currentSession.session;

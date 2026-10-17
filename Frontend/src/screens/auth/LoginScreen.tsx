@@ -186,18 +186,29 @@ export default function LoginScreen({
       if (session?.user) {
         rateLimiter.reset('login', userKey);
         await onLoginSuccess?.(session.user);
-      } else {
-        const { data: currentAuth } = await supabase.auth.getSession();
-        if (currentAuth?.session?.user) {
-          rateLimiter.reset('login', userKey);
-          await onLoginSuccess?.(currentAuth.session.user);
-        }
+        return;
+      }
+
+      // Re-check session in case the deep link listener in App.tsx already resolved it
+      const { data: currentAuth } = await supabase.auth.getSession();
+      if (currentAuth?.session?.user) {
+        rateLimiter.reset('login', userKey);
+        await onLoginSuccess?.(currentAuth.session.user);
+        return;
       }
     } catch (err: unknown) {
+      // Before displaying any error, verify if session actually succeeded in background
+      const { data: currentAuth } = await supabase.auth.getSession();
+      if (currentAuth?.session?.user) {
+        rateLimiter.reset('login', userKey);
+        await onLoginSuccess?.(currentAuth.session.user);
+        return;
+      }
+
       rateLimiter.recordAttempt('login', userKey);
-      const raw = err instanceof Error ? err.message : String(err ?? '');
       const friendly = getFriendlyAuthError(err, '');
-      setFormError(friendly || (raw ? `Google sign-in failed: ${raw}` : "Google sign-in didn't work. Please try again."));
+      const raw = err instanceof Error ? err.message : String(err ?? '');
+      setFormError(friendly || (raw && raw !== 'undefined' ? `Google sign-in failed: ${raw}` : "Google sign-in didn't work. Please try again."));
     } finally {
       setGoogleLoading(false);
       requestInFlight.current = false;
@@ -379,12 +390,12 @@ export default function LoginScreen({
           </View>
 
           {/* Footer Navigation Links */}
-          <View style={styles.footerContainer}>
+          <View style={[styles.footerContainer, { paddingBottom: Math.max(layout.paddingBottom * 0.5, 20) }]}>
             <TouchableOpacity
               onPress={onNavigateToForgotPassword}
-              disabled={busy}
               activeOpacity={0.7}
               style={styles.forgotTouch}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               accessibilityRole="button"
             >
               <Text style={styles.forgotText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
@@ -398,8 +409,8 @@ export default function LoginScreen({
               </Text>
               <TouchableOpacity
                 onPress={onNavigateToSignUp}
-                disabled={busy}
                 activeOpacity={0.7}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
                 accessibilityRole="button"
               >
                 <Text style={styles.signUpText} maxFontSizeMultiplier={MAX_FONT_SCALE}>

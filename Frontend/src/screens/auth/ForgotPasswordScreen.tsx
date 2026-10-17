@@ -449,8 +449,12 @@ export default function ForgotPasswordScreen({
 
           {/* Footer Back Link */}
           {step !== 'success' && (
-            <View style={styles.footerContainer}>
-              <TouchableOpacity onPress={onNavigateToLogin} disabled={isLoading} activeOpacity={0.7}>
+            <View style={[styles.footerContainer, { paddingBottom: Math.max(layout.paddingBottom * 0.5, 20) }]}>
+              <TouchableOpacity
+                onPress={onNavigateToLogin}
+                activeOpacity={0.7}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              >
                 <Text style={styles.backToLoginText} maxFontSizeMultiplier={MAX_FONT_SCALE}>
                   BACK TO LOGIN
                 </Text>
