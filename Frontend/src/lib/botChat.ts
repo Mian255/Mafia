@@ -5,9 +5,7 @@ import type { ChatChannel } from '../types/database';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'openai/gpt-oss-20b:free';
 
-const API_KEY =
-  process.env.EXPO_PUBLIC_OPENROUTER_API_KEY ||
-  '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';
+const API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || '';
 
 /** Strip markdown, symbols, and formatting for clean chat bubbles */
 function cleanChatBubble(text: string): string {
@@ -248,4 +246,49 @@ export async function dispatchBotChat(params: {
       console.warn('Bot chat dispatch error:', e);
     }
   }, delayMs);
+}
+
+/**
+ * Triggers interactive multi-bot banter during town discussion.
+ * All living bots chime in sequentially with natural humanlike delays,
+ * debating, accusing, and defending so the room feels fully alive.
+ */
+export async function dispatchMultiBotDiscussion(params: {
+  gameId: string;
+  round: number;
+  players: GamePlayerView[];
+  recentMessages: ChatMessage[];
+}): Promise<void> {
+  const { gameId, round, players, recentMessages } = params;
+  const livingBots = players.filter((p) => p.is_alive && p.is_bot && p.bot_name);
+  if (livingBots.length === 0) return;
+
+  // Stagger living bots across the discussion window (e.g. 2.5s, 7s, 13s, 20s, 28s...)
+  livingBots.forEach((bot, index) => {
+    const botName = bot.bot_name as string;
+    const delayMs = 2500 + index * 5000 + Math.floor(Math.random() * 2500);
+    const dispatchKey = `${gameId}:discussion_wave:${round}:${botName}`;
+    if (recentBotDispatches.has(dispatchKey)) return;
+    recentBotDispatches.add(dispatchKey);
+    setTimeout(() => recentBotDispatches.delete(dispatchKey), 70000);
+
+    setTimeout(async () => {
+      try {
+        const content = await generateBotMessage({
+          botName,
+          gameId,
+          channel: 'day',
+          phase: 'day_discussion',
+          round,
+          players,
+          recentMessages,
+        });
+        if (content && content.length > 0) {
+          await postBotMessage(gameId, 'day', botName, content);
+        }
+      } catch (err) {
+        console.warn('Multi-bot discussion error for', botName, err);
+      }
+    }, delayMs);
+  });
 }

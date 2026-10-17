@@ -171,6 +171,13 @@ export async function advancePhase(gameId: string): Promise<GameRow | null> {
   return (data as GameRow) ?? null;
 }
 
+export interface InvestigationResultData {
+  isMafia: boolean;
+  targetId?: string;
+  targetName?: string;
+  round: number;
+}
+
 /**
  * Detective-only: whether the seat they investigated that round is mafia. The
  * result travels via this private RPC (never a broadcast event). Returns null if
@@ -179,13 +186,22 @@ export async function advancePhase(gameId: string): Promise<GameRow | null> {
 export async function getInvestigationResult(
   gameId: string,
   roundNumber: number
-): Promise<boolean | null> {
+): Promise<InvestigationResultData | null> {
   const { data, error } = await supabase.rpc('get_investigation_result', {
     p_game_id: gameId,
     p_round_number: roundNumber,
   });
-  if (error) return null;
-  return typeof data === 'boolean' ? data : null;
+  if (error || !data) return null;
+  if (typeof data === 'boolean') {
+    return { isMafia: data, round: roundNumber };
+  }
+  const obj = data as Record<string, unknown>;
+  return {
+    isMafia: Boolean(obj.is_mafia),
+    targetId: typeof obj.target_id === 'string' ? obj.target_id : undefined,
+    targetName: typeof obj.target_name === 'string' ? obj.target_name : undefined,
+    round: typeof obj.round === 'number' ? obj.round : roundNumber,
+  };
 }
 
 /**

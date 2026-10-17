@@ -10,12 +10,19 @@ type Selection = string | 'skip' | null;
  * can be changed until the timer expires. Resolution happens server-side.
  */
 export default function VotingScreen({ state, currentUserId, narratorMessage }: PhaseScreenProps) {
-  const { game, players, mySeat, timeRemaining, castVote } = state;
+  const { game, players, mySeat, myRole, timeRemaining, castVote, investigationHistory, latestInvestigation } = state;
   const [selected, setSelected] = useState<Selection>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   const candidates = players.filter((p) => p.is_alive && p.id !== mySeat?.id);
+  const isDetective = myRole === 'detective';
+
+  const allIntel = investigationHistory.length > 0
+    ? investigationHistory
+    : latestInvestigation
+      ? [latestInvestigation]
+      : [];
 
   const handleConfirm = async () => {
     if (selected === null) return;
@@ -39,6 +46,21 @@ export default function VotingScreen({ state, currentUserId, narratorMessage }: 
       narratorMessage={narratorMessage}
     >
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Detective Investigation Dossier in Voting Screen */}
+        {isDetective && allIntel.length > 0 && (
+          <View style={styles.intelBox}>
+            <Text style={styles.intelTitle}>🕵️ DETECTIVE EVIDENCE</Text>
+            {allIntel.map((item, idx) => (
+              <Text
+                key={`${item.round}-${item.targetName || idx}`}
+                style={[styles.intelRow, { color: item.isMafia ? '#ef4444' : '#10b981' }]}
+              >
+                R{item.round}: {item.targetName || 'Suspect'} → {item.isMafia ? '🚨 CONFIRMED MAFIA' : '🕊️ INNOCENT'}
+              </Text>
+            ))}
+          </View>
+        )}
+
         <Text style={styles.prompt}>Vote to eliminate a suspect.</Text>
         {submitted && (
           <Text style={styles.submittedNote}>Vote locked in — you can still change it before time runs out.</Text>
@@ -129,5 +151,25 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.surfaceAlt,
+  },
+  intelBox: {
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.detective,
+    borderWidth: 1.5,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  intelTitle: {
+    color: colors.detective,
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    marginBottom: spacing.xs,
+  },
+  intelRow: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    marginTop: 2,
   },
 });

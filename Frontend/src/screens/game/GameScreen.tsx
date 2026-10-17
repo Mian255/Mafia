@@ -75,7 +75,7 @@ export default function GameScreen({ room, currentUserId, onExit }: GameScreenPr
     case 'role_reveal':
       return <RoleRevealScreen {...props} />;
     case 'night':
-      return <NightScreen {...props} />;
+      return <NightScreen key={`${game.round_number}-${game.night_stage ?? 'mafia'}`} {...props} />;
     case 'dawn':
     case 'result':
       return <DawnScreen {...props} />;

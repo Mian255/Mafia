@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import * as gameApi from '../lib/games';
-import type { GameRow, GamePlayerView, ChatMessage, GameEventRow } from '../lib/games';
+import type { GameRow, GamePlayerView, ChatMessage, GameEventRow, InvestigationResultData } from '../lib/games';
 import type { ChatChannel, GameRole, Json, NightStage } from '../types/database';
-import { dispatchBotChat, isBotCoordinator } from '../lib/botChat';
+import { dispatchBotChat, dispatchMultiBotDiscussion, isBotCoordinator } from '../lib/botChat';
 
 export interface NightResult {
   round: number;
@@ -33,10 +33,14 @@ export interface GameStateValue {
   activeChannel: ChatChannel | null;
   /** The awake role during 'night' (mafia -> doctor -> detective), else null. */
   nightStage: NightStage | null;
+  latestInvestigation: InvestigationResultData | null;
+  investigationHistory: InvestigationResultData[];
+  mafiaWhisperMode: boolean;
+  setMafiaWhisperMode: (enabled: boolean) => void;
   submitNightAction: (targetSeatId: string) => Promise<void>;
   castVote: (targetSeatId: string | null) => Promise<void>;
   sendChat: (content: string) => Promise<void>;
-  getInvestigation: (round: number) => Promise<boolean | null>;
+  getInvestigation: (round: number) => Promise<InvestigationResultData | null>;
   refresh: () => void;
 }
 
@@ -82,6 +86,9 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
   const [latestNightResult, setLatestNightResult] = useState<NightResult | null>(null);
   const [latestVoteResult, setLatestVoteResult] = useState<VoteResult | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [latestInvestigation, setLatestInvestigation] = useState<gameApi.InvestigationResultData | null>(null);
+  const [investigationHistory, setInvestigationHistory] = useState<gameApi.InvestigationResultData[]>([]);
+  const [mafiaWhisperMode, setMafiaWhisperMode] = useState(false);
 
   // Derived: my seat, role, alive state.
   const mySeat = useMemo(
@@ -100,10 +107,12 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
     if (!game || !mySeat) return null;
     if (game.phase === 'game_over') return null;
     if (!mySeat.is_alive) return 'ghost';
-    // Mafia may scheme only while the mafia are actually awake (their night stage).
-    if (game.phase === 'night') return myRole === 'mafia' && nightStage === 'mafia' ? 'mafia' : null;
+    // Mafia coordinate privately throughout the entire night!
+    if (game.phase === 'night') return myRole === 'mafia' ? 'mafia' : null;
+    // In daytime discussion, mafia can toggle secret whisper mode with teammates
+    if (myRole === 'mafia' && mafiaWhisperMode) return 'mafia';
     return 'day';
-  }, [game, mySeat, myRole, nightStage]);
+  }, [game, mySeat, myRole, mafiaWhisperMode]);
 
   // Refs mirror the latest values so the always-on timer/subscriptions and the
   // action callbacks can read them without re-subscribing (Lobby's pattern).
@@ -317,10 +326,9 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
               avatar_url: sender?.avatar_url ?? null,
               isBot: !row.sender_id,
             };
-            const isHuman = !!row.sender_id;
             setMessages((prev) => {
               const updated = prev.some((m) => m.id === enriched.id) ? prev : [...prev, enriched];
-              if (isHuman && (currChannel === 'day' || currChannel === 'mafia')) {
+              if (currChannel === 'day' || currChannel === 'mafia') {
                 if (isBotCoordinator(currentUserId, playersRef.current)) {
                   void dispatchBotChat({
                     gameId: gid,
@@ -331,7 +339,7 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
                     recentMessages: updated,
                     triggerContent: row.content,
                     triggerSender: enriched.username,
-                    delayMs: Math.floor(Math.random() * 1200) + 1200,
+                    delayMs: Math.floor(Math.random() * 1500) + 1200,
                   });
                 }
               }
@@ -350,7 +358,7 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
     };
   }, [game?.id, activeChannel, currentUserId]);
 
-  // Autonomous bot banter when town discussion phase begins
+  // Autonomous interactive multi-bot banter when town discussion phase begins
   const prevPhaseForBotRef = useRef<string | null>(null);
   useEffect(() => {
     const p = game?.phase;
@@ -360,27 +368,40 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
 
     if (changed && p === 'day_discussion') {
       if (isBotCoordinator(currentUserId, playersRef.current)) {
-        void dispatchBotChat({
+        void dispatchMultiBotDiscussion({
           gameId: game.id,
-          channel: 'day',
-          phase: p,
           round: game.round_number,
           players: playersRef.current,
           recentMessages: messages,
-          delayMs: 3000,
         });
       }
     }
   }, [game?.phase, game?.id, game?.round_number, currentUserId, messages]);
 
-  // Action wrappers. Each calls the RPC then force-ticks so the phase can
-  // early-advance the moment the last living human acts (server re-validates).
+  // Action wrappers.
   const submitNightAction = useCallback(async (targetSeatId: string) => {
     const g = gameRef.current;
     if (!g) return;
     await gameApi.submitNightAction(g.id, targetSeatId);
+
+    // If detective, immediately evaluate and record the investigation result!
+    if (myRole === 'detective') {
+      try {
+        const res = await gameApi.getInvestigationResult(g.id, g.round_number);
+        if (res) {
+          setLatestInvestigation(res);
+          setInvestigationHistory((prev) => {
+            const withoutCurrent = prev.filter((item) => item.round !== res.round);
+            return [...withoutCurrent, res];
+          });
+        }
+      } catch (err) {
+        console.warn('Could not fetch immediate investigation result:', err);
+      }
+    }
+
     tryAdvance(true);
-  }, [tryAdvance]);
+  }, [myRole, tryAdvance]);
 
   const castVote = useCallback(async (targetSeatId: string | null) => {
     const g = gameRef.current;
@@ -421,6 +442,10 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
     messages,
     activeChannel,
     nightStage,
+    latestInvestigation,
+    investigationHistory,
+    mafiaWhisperMode,
+    setMafiaWhisperMode,
     submitNightAction,
     castVote,
     sendChat,

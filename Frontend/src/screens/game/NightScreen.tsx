@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { GamePlayerView } from '../../lib/games';
 import VoiceBar from '../../components/VoiceBar';
@@ -11,7 +11,6 @@ const ACTION_PROMPT: Record<string, string> = {
   detective: 'Choose someone to investigate.',
 };
 
-// Human label for whoever is currently awake, shown in the waiting state.
 const STAGE_ACTOR: Record<string, string> = {
   mafia: 'The Mafia',
   doctor: 'The Doctor',
@@ -19,42 +18,36 @@ const STAGE_ACTOR: Record<string, string> = {
 };
 
 /**
- * Night phase. Mafia / doctor / detective pick a living seat; everyone else
- * waits. The detective also sees their previous-round investigation result via
- * the private get_investigation_result RPC.
+ * Night phase.
+ * Special roles (Mafia, Doctor, Detective) can plan, inspect the town, and take their action.
+ * Mafias can communicate privately via text and voice throughout the night.
+ * Detective immediately sees the verification of their suspect upon confirming their choice.
  */
 export default function NightScreen({ state, currentUserId, narratorMessage, speakCustom }: PhaseScreenProps) {
-  const { game, myRole, mySeat, players, timeRemaining, submitNightAction, getInvestigation, messages, sendChat, nightStage } = state;
+  const {
+    game,
+    myRole,
+    mySeat,
+    players,
+    timeRemaining,
+    submitNightAction,
+    getInvestigation,
+    messages,
+    sendChat,
+    nightStage,
+    latestInvestigation,
+  } = state;
+
   const accent = myRole ? ROLE_COLOR[myRole] : colors.detective;
-  const canAct = mySeat?.is_alive === true && (myRole === 'mafia' || myRole === 'doctor' || myRole === 'detective');
-  // Sequential turns: you may act only while the narrator has woken YOUR role.
-  const myTurn = canAct && nightStage != null && nightStage === myRole;
+  const isSpecialRole = mySeat?.is_alive === true && (myRole === 'mafia' || myRole === 'doctor' || myRole === 'detective');
+  const myTurn = isSpecialRole && nightStage != null && nightStage === myRole;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [investigation, setInvestigation] = useState<boolean | null>(null);
+  const [localInvestigation, setLocalInvestigation] = useState<{ isMafia: boolean; targetName: string } | null>(null);
 
-  // Fetch the previous round's detective result (private; never broadcast).
-  useEffect(() => {
-    let active = true;
-    if (myRole === 'detective' && game && game.round_number > 1) {
-      getInvestigation(game.round_number - 1).then((res) => {
-        if (active) setInvestigation(res);
-      });
-    }
-    return () => {
-      active = false;
-    };
-  }, [myRole, game?.round_number, getInvestigation, game]);
-
-  // Reset selection and submission state whenever the round or night stage changes
-  useEffect(() => {
-    setSelectedId(null);
-    setSubmitted(false);
-    setSubmitting(false);
-  }, [game?.round_number, nightStage]);
-
+  // Targets filter based on active role
   const targets = useMemo<GamePlayerView[]>(
     () =>
       players.filter((p) => {
@@ -67,18 +60,38 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
     [players, myRole, mySeat?.id]
   );
 
-  const handleSubmit = async () => {
+  // Living mafia teammates for syndicate display
+  const mafiaTeammates = useMemo<GamePlayerView[]>(
+    () => players.filter((p) => p.role === 'mafia'),
+    [players]
+  );
+
+  const selectedPlayer = useMemo(
+    () => players.find((p) => p.id === selectedId) ?? null,
+    [players, selectedId]
+  );
+
+  const handleConfirmAction = async () => {
     if (!selectedId) return;
     setSubmitting(true);
     try {
       await submitNightAction(selectedId);
       setSubmitted(true);
-      if (myRole === 'mafia') {
-        speakCustom?.('Mafia, target chosen. Close your eyes.');
+
+      if (myRole === 'detective') {
+        speakCustom?.('Detective, investigation complete. Review your intel.');
+        // Query investigation result immediately
+        const res = await getInvestigation(game?.round_number || 1);
+        if (res) {
+          setLocalInvestigation({
+            isMafia: res.isMafia,
+            targetName: res.targetName || selectedPlayer?.username || 'Suspect',
+          });
+        }
+      } else if (myRole === 'mafia') {
+        speakCustom?.('Mafia, target locked. Plan quietly with your team.');
       } else if (myRole === 'doctor') {
-        speakCustom?.('Doctor, protection chosen. Close your eyes.');
-      } else if (myRole === 'detective') {
-        speakCustom?.('Detective, investigation chosen. Close your eyes.');
+        speakCustom?.('Doctor, patient protected tonight.');
       }
     } catch (e) {
       Alert.alert('Action failed', e instanceof Error ? e.message : 'Please try again.');
@@ -87,32 +100,59 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
     }
   };
 
+  const activeInvestigation = localInvestigation || (latestInvestigation ? {
+    isMafia: latestInvestigation.isMafia,
+    targetName: latestInvestigation.targetName || 'Suspect',
+  } : null);
+
   return (
     <GameShell phaseLabel="Night" round={game?.round_number} timeRemaining={timeRemaining} accent={accent} narratorMessage={narratorMessage}>
-      {/* Mafia coordinate by voice AND secret text chat, but only during their
-          own night stage (once they close their eyes the channel goes quiet). */}
-      {game && myRole === 'mafia' && nightStage === 'mafia' && (
+      {/* Mafia Private Voice Comms: Active throughout the entire Night for all living Mafia */}
+      {game && myRole === 'mafia' && (
         <View style={styles.commsWrap}>
+          <View style={styles.syndicateBanner}>
+            <Text style={styles.syndicateTitle}>🩸 MAFIA SYNDICATE ({mafiaTeammates.length} Members)</Text>
+            <Text style={styles.syndicateMembers}>
+              {mafiaTeammates.map((m) => `${m.username}${m.id === mySeat?.id ? ' (You)' : ''}`).join(' • ')}
+            </Text>
+          </View>
           <VoiceBar channel="mafia" ids={{ gameId: game.id }} compact />
         </View>
       )}
+
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {myRole === 'detective' && investigation !== null && (
-          <View style={[styles.resultBanner, { borderColor: investigation ? colors.mafia : colors.doctor }]}>
-            <Text style={styles.resultLabel}>LAST INVESTIGATION</Text>
-            <Text style={[styles.resultValue, { color: investigation ? colors.mafia : colors.doctor }]}>
-              {investigation ? 'Your suspect is MAFIA' : 'Your suspect is NOT mafia'}
+        {/* Detective Investigation Result Reveal: Immediate feedback when guess is confirmed */}
+        {myRole === 'detective' && activeInvestigation && (
+          <View
+            style={[
+              styles.investigationCard,
+              { borderColor: activeInvestigation.isMafia ? colors.mafia : colors.doctor },
+            ]}
+          >
+            <Text style={styles.investigationBadge}>
+              {activeInvestigation.isMafia ? '🚨 GUILTY — MAFIA FOUND' : '🕊️ INNOCENT — CITIZEN'}
+            </Text>
+            <Text style={styles.investigationTitle}>
+              {activeInvestigation.targetName}
+            </Text>
+            <Text style={[styles.investigationDetail, { color: activeInvestigation.isMafia ? '#fca5a5' : '#86efac' }]}>
+              {activeInvestigation.isMafia
+                ? 'Your investigation confirmed: This player is a member of the Mafia!'
+                : 'Your investigation confirmed: This player is NOT Mafia. They belong to the Town.'}
             </Text>
           </View>
         )}
 
+        {/* When it IS my turn: Active selection grid and action controls */}
         {myTurn ? (
-          <>
+          <View style={styles.actionSection}>
             <Text style={styles.prompt}>{ACTION_PROMPT[myRole ?? '']}</Text>
             {submitted && (
-              <Text style={[styles.submittedNote, { color: accent }]}>
-                Choice locked in — you can still change it before dawn.
-              </Text>
+              <View style={[styles.submittedBanner, { borderColor: accent }]}>
+                <Text style={[styles.submittedText, { color: accent }]}>
+                  ✓ Choice locked in: {selectedPlayer?.username ?? 'Target selected'}. You can still change it before dawn.
+                </Text>
+              </View>
             )}
             <View style={styles.grid}>
               {targets.map((p) => (
@@ -126,40 +166,78 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
                 />
               ))}
             </View>
-          </>
+          </View>
+        ) : isSpecialRole ? (
+          /* When it is NOT my turn yet: Show rich preparation state with town roster so the screen is never blank */
+          <View style={styles.prepSection}>
+            <View style={styles.prepCard}>
+              <Text style={styles.prepHeader}>🌙 NIGHT IN PROGRESS</Text>
+              <Text style={styles.prepStageText}>
+                {nightStage
+                  ? `${STAGE_ACTOR[nightStage]} is currently taking their turn.`
+                  : 'Special roles are acting under cover of darkness.'}
+              </Text>
+              <Text style={styles.prepInstruction}>
+                You are the <Text style={{ color: accent, fontWeight: '800' }}>{myRole?.toUpperCase()}</Text>.
+                {' '}Inspect the town below to prepare your choice when the narrator calls you.
+              </Text>
+            </View>
+
+            <Text style={styles.prepRosterTitle}>Town Roster ({players.filter((p) => p.is_alive).length} Alive)</Text>
+            <View style={styles.grid}>
+              {targets.map((p) => (
+                <SeatTile
+                  key={p.id}
+                  player={p}
+                  accent={accent}
+                  selected={selectedId === p.id}
+                  onPress={(sel) => setSelectedId(sel.id)}
+                  subtitle={p.role === 'mafia' && myRole === 'mafia' ? 'Ally' : 'Candidate'}
+                />
+              ))}
+            </View>
+          </View>
         ) : (
-          <View style={styles.waitBlock}>
-            <Text style={styles.waitTitle}>The town sleeps…</Text>
-            <Text style={styles.waitText}>
-              {nightStage
-                ? `${STAGE_ACTOR[nightStage]} is making their move. Sit tight until the narrator calls you.`
-                : 'Special roles are making their move under the cover of darkness. Sit tight until dawn.'}
-            </Text>
+          /* Civilians: Atmospheric sleeping town display */
+          <View style={styles.civilianSection}>
+            <View style={styles.civilianCard}>
+              <Text style={styles.civilianMoon}>🌙</Text>
+              <Text style={styles.civilianTitle}>The Town Sleeps…</Text>
+              <Text style={styles.civilianText}>
+                You are a peaceful citizen resting in your home. Special roles are moving through the shadows. Listen closely to the night sounds and prepare for dawn.
+              </Text>
+            </View>
+
+            <Text style={styles.prepRosterTitle}>Surviving Town ({players.filter((p) => p.is_alive).length} Citizens)</Text>
+            <View style={styles.grid}>
+              {players.filter((p) => p.is_alive).map((p) => (
+                <SeatTile key={p.id} player={p} accent={colors.civilian} disabled />
+              ))}
+            </View>
           </View>
         )}
 
-        {/* Secret mafia text chat at night: living mafia coordinate like in
-            tabletop Mafia, alongside the voice bar. Realtime stream comes from
-            useGameState (activeChannel === 'mafia' during night for mafia). */}
-        {myRole === 'mafia' && nightStage === 'mafia' && (
+        {/* Secret Mafia Text Chat: Always visible to Mafia players throughout the Night */}
+        {myRole === 'mafia' && (
           <View style={styles.nightChatWrap}>
-            <Text style={styles.nightChatLabel}>MAFIA CHANNEL — SECRET</Text>
+            <Text style={styles.nightChatLabel}>🔒 SECRET MAFIA CHAT — TEAM ONLY</Text>
             <ChatPanel
               messages={messages}
               currentUserId={currentUserId}
               onSend={sendChat}
               accent="#ef4444"
-              placeholder="Plan quietly with your team…"
+              placeholder="Coordinate secretly with your fellow Mafia…"
             />
           </View>
         )}
       </ScrollView>
 
+      {/* Confirmation footer button when it's the player's turn */}
       {myTurn && (
         <View style={styles.footer}>
           <PrimaryButton
-            label={submitting ? 'Submitting…' : submitted ? 'Change Choice' : 'Confirm'}
-            onPress={handleSubmit}
+            label={submitting ? 'Confirming…' : submitted ? 'Update Choice' : 'Confirm Night Choice'}
+            onPress={handleConfirmAction}
             disabled={!selectedId || submitting}
             accent={accent}
           />
@@ -172,18 +250,161 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
 const styles = StyleSheet.create({
   content: {
     padding: spacing.xl,
+    paddingBottom: spacing.xxl * 2,
   },
   commsWrap: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  syndicateBanner: {
+    backgroundColor: 'rgba(220, 38, 38, 0.12)',
+    borderColor: 'rgba(220, 38, 38, 0.4)',
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  syndicateTitle: {
+    color: '#ef4444',
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  syndicateMembers: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  investigationCard: {
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 2,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.xl,
+    alignItems: 'center',
+  },
+  investigationBadge: {
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  investigationTitle: {
+    color: colors.textPrimary,
+    fontSize: fontSize.xl,
+    fontWeight: '900',
+    marginBottom: spacing.xs,
+  },
+  investigationDetail: {
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  actionSection: {
+    marginBottom: spacing.xl,
+  },
+  prompt: {
+    color: colors.textPrimary,
+    fontSize: fontSize.lg,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  submittedBanner: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  submittedText: {
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  prepSection: {
+    marginBottom: spacing.xl,
+  },
+  prepCard: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.borderStrong,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  prepHeader: {
+    color: colors.textDim,
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: spacing.xs,
+  },
+  prepStageText: {
+    color: colors.textPrimary,
+    fontSize: fontSize.md,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  prepInstruction: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  prepRosterTitle: {
+    color: colors.textDim,
+    fontSize: fontSize.xs,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: spacing.md,
+  },
+  civilianSection: {
+    marginBottom: spacing.xl,
+  },
+  civilianCard: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  civilianMoon: {
+    fontSize: 36,
+    marginBottom: spacing.sm,
+  },
+  civilianTitle: {
+    color: colors.textPrimary,
+    fontSize: fontSize.lg,
+    fontWeight: '800',
+    marginBottom: spacing.xs,
+  },
+  civilianText: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: spacing.md,
   },
   nightChatWrap: {
     marginTop: spacing.xl,
-    height: 260,
+    height: 270,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.35)',
+    borderColor: 'rgba(239, 68, 68, 0.4)',
     borderRadius: radius.md,
-    backgroundColor: 'rgba(239, 68, 68, 0.06)',
+    backgroundColor: 'rgba(239, 68, 68, 0.05)',
     padding: spacing.md,
   },
   nightChatLabel: {
@@ -192,58 +413,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1.5,
     marginBottom: spacing.sm,
-  },
-  prompt: {
-    color: colors.textSecondary,
-    fontSize: fontSize.lg,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: spacing.lg,
-  },
-  submittedNote: {
-    fontSize: fontSize.sm,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: spacing.md,
-  },
-  waitBlock: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxl,
-  },
-  waitTitle: {
-    color: colors.textPrimary,
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    marginBottom: spacing.md,
-  },
-  waitText: {
-    color: colors.textMuted,
-    fontSize: fontSize.md,
-    lineHeight: 20,
-    textAlign: 'center',
-  },
-  resultBanner: {
-    borderWidth: 1.5,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.xl,
-    backgroundColor: colors.surface,
-  },
-  resultLabel: {
-    color: colors.textDim,
-    fontSize: fontSize.xs,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  resultValue: {
-    fontSize: fontSize.lg,
-    fontWeight: '900',
-    marginTop: spacing.xs,
   },
   footer: {
     padding: spacing.xl,

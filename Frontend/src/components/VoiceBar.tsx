@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useVoiceRoom, type VoiceRoomState } from '../hooks/useVoiceRoom';
 import type { VoiceChannel, VoiceIdentity } from '../lib/voice';
 
@@ -17,6 +17,15 @@ interface VoiceBarProps {
 export default function VoiceBar({ channel, ids, compact = false }: VoiceBarProps) {
   const voice: VoiceRoomState = useVoiceRoom(channel, ids);
 
+  const showHelp = () => {
+    Alert.alert(
+      'LiveKit Voice Setup',
+      'Real-time voice comms requires LiveKit credentials configured on your Supabase backend.\n\nTo activate voice:\n1. Create a free account at cloud.livekit.io\n2. Run in the Backend folder:\n   npx supabase secrets set LIVEKIT_URL=wss://your-project.livekit.cloud\n   npx supabase secrets set LIVEKIT_API_KEY=APIxxxx\n   npx supabase secrets set LIVEKIT_API_SECRET=xxxx\n3. Deploy the voice-token edge function.'
+    );
+  };
+
+  const isConfigError = voice.error && (voice.error.toLowerCase().includes('not configured') || voice.error.toLowerCase().includes('livekit'));
+
   return (
     <View style={[styles.wrap, compact && styles.compact]}>
       {voice.status === 'connecting' ? (
@@ -27,22 +36,26 @@ export default function VoiceBar({ channel, ids, compact = false }: VoiceBarProp
 
       <Text style={styles.label}>
         {voice.status === 'error'
-          ? 'VOICE DOWN'
+          ? isConfigError ? 'VOICE SETUP' : 'VOICE DOWN'
           : voice.muted
             ? 'VOICE OFF'
             : 'VOICE LIVE'}
       </Text>
 
       {voice.error ? (
-        <Text style={styles.errorText} numberOfLines={1}>
-          {voice.error}
-        </Text>
+        <TouchableOpacity style={styles.errorWrap} onPress={showHelp} activeOpacity={0.7}>
+          <Text style={styles.errorText} numberOfLines={1}>
+            {isConfigError ? 'Setup required (LiveKit) ⓘ' : voice.error}
+          </Text>
+        </TouchableOpacity>
       ) : voice.participants.length > 0 ? (
         <Text style={styles.speakers} numberOfLines={1}>
           {voice.participants.map((p) => `${p.isSpeaking ? '🔊 ' : ''}${p.name}`).join('  ')}
         </Text>
       ) : (
-        <Text style={styles.speakers} numberOfLines={1} />
+        <Text style={styles.speakers} numberOfLines={1}>
+          {channel === 'mafia' ? 'Mafia private line' : 'Town voice active'}
+        </Text>
       )}
 
       {voice.canPublish ? (
@@ -122,9 +135,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
   },
-  errorText: {
+  errorWrap: {
     flex: 1,
+  },
+  errorText: {
     color: '#f87171',
     fontSize: 11,
+    fontWeight: '700',
   },
 });

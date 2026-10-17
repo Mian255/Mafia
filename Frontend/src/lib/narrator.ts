@@ -1,10 +1,8 @@
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'openai/gpt-oss-20b:free';
 
-// Fallback key from env or provided project key
-const API_KEY =
-  process.env.EXPO_PUBLIC_OPENROUTER_API_KEY ||
-  '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';
+// API key from environment
+const API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || '';
 
 /**
  * Strips all markdown formatting, bold/italics, quotes, headers, and emojis
