@@ -3,23 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
 import { Database } from '../types/database';
 
-// EXPO_PUBLIC_* vars are inlined at build time, so they must be referenced directly.
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const DEFAULT_SUPABASE_URL = 'https://cfutaueuomfqkmqystkk.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmdXRhdWV1b21mcWttcXlzdGtrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4OTk0MzEsImV4cCI6MjEwNTQ3NTQzMX0.KzvfC5dnEDe3II-5O3PMmEWDII83T-dEJ6nbpNX2Qo0';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  const missing = [
-    !supabaseUrl && 'EXPO_PUBLIC_SUPABASE_URL',
-    !supabaseAnonKey && 'EXPO_PUBLIC_SUPABASE_ANON_KEY',
-  ]
-    .filter(Boolean)
-    .join(', ');
-  throw new Error(
-    `[supabase] Missing environment variable(s): ${missing}. ` +
-      'Copy Frontend/.env.example to Frontend/.env, fill in your Supabase project URL and anon key, ' +
-      'then restart Metro with a cleared cache (npx expo start -c).'
-  );
-}
+// EXPO_PUBLIC_* vars are inlined at build time, so they must be referenced directly.
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {

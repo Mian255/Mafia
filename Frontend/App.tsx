@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, Linking, Platform, StyleSheet, ToastAndroid, View } from 'react-native';
+import {
+  BackHandler,
+  Linking,
+  Platform,
+  StyleSheet,
+  Text,
+  ToastAndroid,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './src/lib/supabase';
@@ -40,7 +49,7 @@ const AUTH_ENTRY_SCREENS: ReadonlySet<ScreenState> = new Set<ScreenState>([
   'signup',
 ]);
 
-export default function App() {
+function AppContent() {
   const [currentScreen, setCurrentScreen] = useState<ScreenState>('splash');
   const [navigationHistory, setNavigationHistory] = useState<ScreenState[]>(['splash']);
   const [userAlias, setUserAlias] = useState('Agent');
@@ -429,9 +438,89 @@ export default function App() {
   );
 }
 
+class RootErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('RootErrorBoundary caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <SafeAreaProvider>
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorTitle}>Oops! Something went wrong.</Text>
+            <Text style={styles.errorMessage}>
+              {this.state.error?.message || 'An unexpected issue occurred.'}
+            </Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => this.setState({ hasError: false, error: null })}
+            >
+              <Text style={styles.retryButtonText}>Restart App</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaProvider>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <RootErrorBoundary>
+      <AppContent />
+    </RootErrorBoundary>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#07090e',
+  },
+  errorContainer: {
+    flex: 1,
+    backgroundColor: '#07090e',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  errorTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#ff4444',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: '#b0b8c4',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  retryButton: {
+    backgroundColor: '#e63946',
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

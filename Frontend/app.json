@@ -28,6 +28,7 @@
       }
     },
     "plugins": [
+      "expo-audio",
       "expo-web-browser",
       "@livekit/react-native-expo-plugin",
       [
