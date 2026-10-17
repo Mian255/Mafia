@@ -1,6 +1,6 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ChatPanel, GameShell, PlayerAvatar, type PhaseScreenProps } from './gameUi';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ChatPanel, GameShell, PlayerAvatar, PrimaryButton, type PhaseScreenProps } from './gameUi';
 import VoiceBar from '../../components/VoiceBar';
 import { colors, fontSize, radius, spacing } from '../../theme/tokens';
 
@@ -17,7 +17,7 @@ const PHASE_LABEL: Record<string, string> = {
  * Shown to eliminated players. They spectate the living game and talk privately
  * in the `ghost` channel until the game ends (GameOverScreen takes over then).
  */
-export default function DeadPlayerScreen({ state, currentUserId, narratorMessage }: PhaseScreenProps) {
+export default function DeadPlayerScreen({ state, currentUserId, onExit, narratorMessage }: PhaseScreenProps) {
   const { game, players, messages, sendChat, activeChannel, timeRemaining } = state;
   const living = players.filter((p) => p.is_alive);
   const phaseLabel = game ? PHASE_LABEL[game.phase] ?? 'Spectating' : 'Spectating';
@@ -36,6 +36,14 @@ export default function DeadPlayerScreen({ state, currentUserId, narratorMessage
           <Text style={styles.bannerTitle}>You were eliminated</Text>
           <Text style={styles.bannerSub}>Watch how it unfolds — {phaseLabel} in progress.</Text>
         </View>
+        <TouchableOpacity
+          style={styles.bannerExitBtn}
+          onPress={onExit}
+          accessibilityRole="button"
+          accessibilityLabel="Exit game"
+        >
+          <Text style={styles.bannerExitText}>EXIT</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.rosterWrap}>
@@ -63,6 +71,11 @@ export default function DeadPlayerScreen({ state, currentUserId, narratorMessage
         placeholder="Ghost chat…"
         disabled={activeChannel !== 'ghost'}
       />
+
+      {/* Eliminated players can leave at any time instead of spectating. */}
+      <View style={styles.exitWrap}>
+        <PrimaryButton label="Exit Game" onPress={onExit} />
+      </View>
     </GameShell>
   );
 }
@@ -77,6 +90,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderStrong,
     backgroundColor: colors.surface,
+  },
+  exitWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
   bannerIcon: {
     fontSize: 32,
@@ -94,6 +111,21 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSize.sm,
     marginTop: 2,
+  },
+  bannerExitBtn: {
+    marginLeft: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(225, 29, 72, 0.15)',
+  },
+  bannerExitText: {
+    color: colors.accent,
+    fontSize: fontSize.xs,
+    fontWeight: '900',
+    letterSpacing: 1.5,
   },
   rosterWrap: {
     paddingVertical: spacing.md,
