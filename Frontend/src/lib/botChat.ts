@@ -3,9 +3,11 @@ import type { GamePlayerView, ChatMessage } from './games';
 import type { ChatChannel } from '../types/database';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const DEFAULT_MODEL = 'openai/gpt-oss-20b:free';
+const DEFAULT_MODEL = 'liquid/lfm-2.5-2.6b:free';
 
-const API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || '';
+const DEFAULT_OPENROUTER_KEY =
+  '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';
+const API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || DEFAULT_OPENROUTER_KEY;
 
 /** Strip markdown, symbols, and formatting for clean chat bubbles */
 function cleanChatBubble(text: string): string {
@@ -19,33 +21,73 @@ function cleanChatBubble(text: string): string {
     .slice(0, 180);
 }
 
+// Track recently spoken lines to prevent repetition across all bots
+const recentlySpoken = new Set<string>();
+function rememberLine(line: string) {
+  recentlySpoken.add(line);
+  if (recentlySpoken.size > 40) {
+    const oldest = recentlySpoken.values().next().value;
+    if (oldest) recentlySpoken.delete(oldest);
+  }
+}
+
 /** Rich contextual dialogue bank for instant, lag-free bot interactions */
-const HEURISTIC_BANTER: Record<string, string[]> = {
+const HEURISTIC_BANTER = {
   discussion_openers: [
     "Another night has passed... we need to find who among us is lying.",
     "Look at everyone's actions. The Mafia is trying to blend in right now.",
-    "Let's not rush our votes today. Who seems the most quiet?",
+    "Let's not rush our votes today. We need to hear everyone out.",
     "We have to work together and listen carefully to everyone's defense.",
-    "I'm keeping a close eye on the quiet ones today.",
+    "Listen up everyone. We need to look closely at who is deflecting.",
+    "The town cannot afford a wrong vote today. Let's analyze carefully.",
+    "Who seems nervous? Watch how people react to questions.",
+    "Townies, stay sharp. The Mafia will try to steer the narrative.",
+    "Check the previous voting patterns. That's where the truth is.",
+    "I have my eyes on a few people today. Let's see who speaks first.",
+    "Don't let anyone push an easy target without solid reasoning.",
+    "Let's review what happened last night before jumping to conclusions.",
   ],
   accused_defenses: [
     "Why are you pointing fingers at me? I've been helping the town all along!",
     "Accusing me is a classic Mafia distraction. Look at the real evidence!",
-    "I'm completely innocent! If you vote me out, the town loses a citizen.",
+    "I'm completely innocent! If you vote me out, the town loses a good citizen.",
     "Don't fall for this trap. The Mafia wants you to vote out honest players!",
     "That accusation is baseless. What makes you suspect me over anyone else?",
+    "Look at my voting record. I'm fighting for the town!",
+    "You're jumping to conclusions. Ask yourself who benefits from my elimination.",
+    "I'm on the town's side. If you eliminate me, you're helping the Mafia win.",
+    "I have nothing to hide. Focus on the players who are deflecting!",
   ],
   general_suspicions: [
     "Someone here is voting in lockstep. We need to pay attention.",
     "I'm suspicious of anyone who rushed the vote earlier.",
     "Notice how quickly the blame shifted? That's suspicious.",
     "Let's see who defends who before we lock in our final votes.",
+    "Rushing votes only helps the Mafia. Let's think this through.",
+    "Whoever stays too quiet is usually trying to hide something.",
+    "Pay attention to who started that accusation out of nowhere.",
+    "The Mafia always tries to create chaos during discussion.",
+    "Voting without giving a reason is a massive red flag.",
+    "I'm noticing a pattern here and it doesn't look innocent.",
+    "Defending a suspect too eagerly makes you just as suspicious.",
+    "Let's make sure we question everyone before locking in votes.",
+  ],
+  human_replies: [
+    "I agree with that. We need to look into this further.",
+    "That's a fair point, but let's consider all angles first.",
+    "I'm not convinced yet. We need stronger proof before voting.",
+    "Good catch. Let's see how they react to that.",
+    "Careful, that might be what the Mafia wants us to think.",
+    "I see what you mean. Who else supports that theory?",
+    "You might be onto something there. Let's press them on it.",
   ],
   mafia_night_banter: [
     "We need to eliminate the detective before they find us out.",
     "Who seems most dangerous to our team?",
     "Let's stay coordinated and act together tonight.",
     "Targeting a strong voice will throw the town into confusion tomorrow.",
+    "Keep our stories aligned for tomorrow morning.",
+    "Don't vote together too early tomorrow, it looks suspicious.",
   ],
 };
 
@@ -75,24 +117,52 @@ export async function generateBotMessage(params: GenerateParams): Promise<string
   const livingPlayers = players.filter((p) => p.is_alive).map((p) => p.username).join(', ');
   const deadPlayers = players.filter((p) => !p.is_alive).map((p) => `${p.username} (${p.death_reason || 'eliminated'})`).join(', ');
 
+  const otherLiving = players
+    .filter((p) => p.is_alive && p.username !== botName)
+    .map((p) => p.username);
+  const targetPlayer = otherLiving.length > 0 ? getRandom(otherLiving) : 'someone';
+
   const isNamed =
     triggerContent &&
     botName &&
     triggerContent.toLowerCase().includes(botName.replace(/^bot\s*/i, '').toLowerCase());
 
-  // Fast offline / heuristic fallback if needed
+  // Fast offline / heuristic fallback with dynamic player mentions
   const getFallback = (): string => {
+    let pool: string[];
     if (channel === 'mafia') {
-      return getRandom(HEURISTIC_BANTER.mafia_night_banter);
-    }
-    if (isNamed) {
+      pool = HEURISTIC_BANTER.mafia_night_banter;
+    } else if (isNamed) {
       const def = getRandom(HEURISTIC_BANTER.accused_defenses);
-      return triggerSender ? `${triggerSender}, ${def.toLowerCase()}` : def;
+      const res = triggerSender ? `${triggerSender}, ${def.toLowerCase()}` : def;
+      rememberLine(res);
+      return res;
+    } else if (triggerSender && !triggerSender.toLowerCase().startsWith('bot')) {
+      // Human player spoke in chat — respond contextually!
+      pool = [
+        ...HEURISTIC_BANTER.human_replies,
+        `${triggerSender}, do you have solid evidence or is that a gut feeling?`,
+        `Good point, ${triggerSender}. What do you think, ${targetPlayer}?`,
+        `I hear you, ${triggerSender}. Let's see what ${targetPlayer} has to say.`,
+      ];
+    } else if (recentMessages.length <= 1) {
+      pool = HEURISTIC_BANTER.discussion_openers;
+    } else {
+      pool = [
+        ...HEURISTIC_BANTER.general_suspicions,
+        `I'm watching ${targetPlayer} very closely today.`,
+        `${targetPlayer}, you've been quiet. What are your thoughts?`,
+        `Does anyone else find ${targetPlayer}'s behavior suspicious?`,
+        `Let's hear ${targetPlayer}'s explanation before we vote.`,
+        `${targetPlayer}, who are you suspecting right now?`,
+      ];
     }
-    if (recentMessages.length <= 1) {
-      return getRandom(HEURISTIC_BANTER.discussion_openers);
-    }
-    return getRandom(HEURISTIC_BANTER.general_suspicions);
+
+    // Filter out recently used lines to avoid repetition
+    const freshLines = pool.filter((line) => !recentlySpoken.has(line));
+    const chosen = freshLines.length > 0 ? getRandom(freshLines) : getRandom(pool);
+    rememberLine(chosen);
+    return chosen;
   };
 
   // If no API key is available, use heuristic immediately
@@ -123,7 +193,7 @@ export async function generateBotMessage(params: GenerateParams): Promise<string
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s tight timeout
 
     const res = await fetch(OPENROUTER_URL, {
       method: 'POST',
@@ -143,7 +213,7 @@ export async function generateBotMessage(params: GenerateParams): Promise<string
             content: `Recent chat:\n${recentTranscript || 'Discussion has just begun.'}\n\nSay your quick in-character remark:`,
           },
         ],
-        max_tokens: 45,
+        max_tokens: 35,
         temperature: 0.85,
       }),
     });
@@ -153,7 +223,9 @@ export async function generateBotMessage(params: GenerateParams): Promise<string
       const data = await res.json();
       const choice = data?.choices?.[0]?.message?.content;
       if (typeof choice === 'string' && choice.trim().length > 0) {
-        return cleanChatBubble(choice);
+        const cleaned = cleanChatBubble(choice);
+        rememberLine(cleaned);
+        return cleaned;
       }
     }
   } catch {
@@ -177,6 +249,8 @@ export function isBotCoordinator(currentUserId: string, players: GamePlayerView[
 
 // In-flight guard to avoid double-posting
 const recentBotDispatches = new Set<string>();
+const lastBotPostTime: Record<string, number> = {};
+const lastSpokenBot: Record<string, string> = {};
 
 /**
  * Triggers a natural bot reply to a human message or phase event.
@@ -193,7 +267,18 @@ export async function dispatchBotChat(params: {
   triggerSender?: string;
   delayMs?: number;
 }): Promise<void> {
-  const { gameId, channel, phase, round, players, recentMessages, triggerContent, triggerSender, delayMs = 1500 } = params;
+  const { gameId, channel, phase, round, players, recentMessages, triggerContent, triggerSender, delayMs = 2500 } = params;
+
+  // CRITICAL: If the trigger was from a bot, NEVER respond! (Prevents bot-to-bot recursion)
+  if (triggerSender && (triggerSender.toLowerCase().startsWith('bot') || players.some((p) => p.is_bot && p.bot_name === triggerSender))) {
+    return;
+  }
+
+  // Enforce a minimum cooldown of 4 seconds between ANY bot posts in this game
+  const now = Date.now();
+  if (now - (lastBotPostTime[gameId] || 0) < 4000) {
+    return;
+  }
 
   // Filter living bots eligible for this channel
   const eligibleBots = players.filter((p) => {
@@ -205,15 +290,19 @@ export async function dispatchBotChat(params: {
   if (eligibleBots.length === 0) return;
 
   // If a specific bot was named (e.g. "Sherlock"), pick that bot if living!
-  let selectedBot = eligibleBots.find(
+  const selectedNamedBot = eligibleBots.find(
     (b) =>
       triggerContent &&
       b.bot_name &&
       triggerContent.toLowerCase().includes(b.bot_name.replace(/^bot\s*/i, '').toLowerCase())
   );
 
+  let selectedBot = selectedNamedBot;
   if (!selectedBot) {
-    selectedBot = getRandom(eligibleBots);
+    // Rotate speakers: exclude the bot that spoke last if possible
+    const others = eligibleBots.filter((b) => b.bot_name !== lastSpokenBot[gameId]);
+    const pool = others.length > 0 ? others : eligibleBots;
+    selectedBot = getRandom(pool);
   }
 
   const botName = selectedBot.bot_name || 'Bot Player';
@@ -240,6 +329,8 @@ export async function dispatchBotChat(params: {
       });
 
       if (content && content.length > 0) {
+        lastBotPostTime[gameId] = Date.now();
+        lastSpokenBot[gameId] = botName;
         await postBotMessage(gameId, channel, botName, content);
       }
     } catch (e) {
@@ -263,10 +354,11 @@ export async function dispatchMultiBotDiscussion(params: {
   const livingBots = players.filter((p) => p.is_alive && p.is_bot && p.bot_name);
   if (livingBots.length === 0) return;
 
-  // Stagger living bots across the discussion window (e.g. 2.5s, 7s, 13s, 20s, 28s...)
+  // Stagger all living bots across the discussion window with natural pacing:
+  // Bot 1: 3-5s, Bot 2: 11-14s, Bot 3: 20-23s, Bot 4: 29-33s
   livingBots.forEach((bot, index) => {
     const botName = bot.bot_name as string;
-    const delayMs = 2500 + index * 5000 + Math.floor(Math.random() * 2500);
+    const delayMs = 3500 + index * 8500 + Math.floor(Math.random() * 2000);
     const dispatchKey = `${gameId}:discussion_wave:${round}:${botName}`;
     if (recentBotDispatches.has(dispatchKey)) return;
     recentBotDispatches.add(dispatchKey);
@@ -284,6 +376,8 @@ export async function dispatchMultiBotDiscussion(params: {
           recentMessages,
         });
         if (content && content.length > 0) {
+          lastBotPostTime[gameId] = Date.now();
+          lastSpokenBot[gameId] = botName;
           await postBotMessage(gameId, 'day', botName, content);
         }
       } catch (err) {

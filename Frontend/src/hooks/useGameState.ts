@@ -120,6 +120,7 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
   const gameRef = useRef<GameRow | null>(null);
   const playersRef = useRef<GamePlayerView[]>([]);
   const activeChannelRef = useRef<ChatChannel | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const advancingRef = useRef(false);
   const lastAdvanceAtRef = useRef(0);
 
@@ -129,6 +130,7 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
     gameRef.current = game;
     playersRef.current = players;
     activeChannelRef.current = activeChannel;
+    messagesRef.current = messages;
   });
 
   useEffect(() => {
@@ -319,32 +321,44 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
             } else if (row.channel !== currChannel) {
               return;
             }
-            const sender = playersRef.current.find((p) => p.user_id === row.sender_id);
+            const isBotMsg = !row.sender_id;
+            const humanSender = !isBotMsg && row.sender_id
+              ? playersRef.current.find((p) => p.user_id === row.sender_id)
+              : undefined;
+            const botSender = isBotMsg && row.sender_display
+              ? playersRef.current.find((p) => p.is_bot && p.bot_name === row.sender_display)
+              : undefined;
+
             const enriched: ChatMessage = {
               ...row,
-              username: sender?.username ?? row.sender_display ?? 'Player',
-              avatar_url: sender?.avatar_url ?? null,
-              isBot: !row.sender_id,
+              username: isBotMsg
+                ? (row.sender_display || 'Bot Player')
+                : (humanSender?.username ?? row.sender_display ?? 'Player'),
+              avatar_url: isBotMsg
+                ? (botSender?.avatar_url ?? 'detective')
+                : (humanSender?.avatar_url ?? null),
+              isBot: isBotMsg,
             };
-            setMessages((prev) => {
-              const updated = prev.some((m) => m.id === enriched.id) ? prev : [...prev, enriched];
-              if (currChannel === 'day' || currChannel === 'mafia') {
-                if (isBotCoordinator(currentUserId, playersRef.current)) {
-                  void dispatchBotChat({
-                    gameId: gid,
-                    channel: currChannel,
-                    phase: gameRef.current?.phase || '',
-                    round: gameRef.current?.round_number || 1,
-                    players: playersRef.current,
-                    recentMessages: updated,
-                    triggerContent: row.content,
-                    triggerSender: enriched.username,
-                    delayMs: Math.floor(Math.random() * 1500) + 1200,
-                  });
-                }
+
+            setMessages((prev) => (prev.some((m) => m.id === enriched.id) ? prev : [...prev, enriched]));
+
+            // Only trigger a bot reply if a REAL HUMAN player spoke!
+            // Bots must never trigger other bots to prevent endless ping-pong loops.
+            if (!isBotMsg && (currChannel === 'day' || currChannel === 'mafia')) {
+              if (isBotCoordinator(currentUserId, playersRef.current)) {
+                void dispatchBotChat({
+                  gameId: gid,
+                  channel: currChannel,
+                  phase: gameRef.current?.phase || '',
+                  round: gameRef.current?.round_number || 1,
+                  players: playersRef.current,
+                  recentMessages: [...messagesRef.current, enriched],
+                  triggerContent: row.content,
+                  triggerSender: enriched.username,
+                  delayMs: Math.floor(Math.random() * 2000) + 2500,
+                });
               }
-              return updated;
-            });
+            }
           }
         )
         .subscribe();
@@ -372,11 +386,11 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
           gameId: game.id,
           round: game.round_number,
           players: playersRef.current,
-          recentMessages: messages,
+          recentMessages: messagesRef.current,
         });
       }
     }
-  }, [game?.phase, game?.id, game?.round_number, currentUserId, messages]);
+  }, [game?.phase, game?.id, game?.round_number, currentUserId]);
 
   // Action wrappers.
   const submitNightAction = useCallback(async (targetSeatId: string) => {
