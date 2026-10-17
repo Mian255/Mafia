@@ -79,6 +79,13 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
         speakCustom?.('Doctor, protection chosen. Close your eyes.');
       } else if (myRole === 'detective') {
         speakCustom?.('Detective, investigation chosen. Close your eyes.');
+        // Reveal the verdict right away: the server records the night_action on
+        // submit, so the private RPC for THIS round is already readable.
+        if (game) {
+          getInvestigation(game.round_number).then((res) => {
+            if (res !== null) setInvestigation(res);
+          });
+        }
       }
     } catch (e) {
       Alert.alert('Action failed', e instanceof Error ? e.message : 'Please try again.');

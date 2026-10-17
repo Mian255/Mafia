@@ -29,6 +29,15 @@ try {
 // path wrongly takes the web branch (and mic toggling misbehaves on device).
 const isWeb = Platform.OS === 'web';
 
+// True when a real microphone cannot exist: the native WebRTC module is absent
+// (e.g. Expo Go) and the browser mediaDevices API is missing. In that case the
+// mic toggle only flips local UI state instead of calling into WebRTC, which
+// would reject with an unhandled promise error.
+const micUnavailable =
+  !livekitRn &&
+  (typeof navigator === 'undefined' ||
+    typeof navigator.mediaDevices?.getUserMedia !== 'function');
+
 // Polyfill mediaDevices for React Native / Expo Go where native WebRTC is not linked
 // to prevent livekit-client from throwing "Cannot read property 'getUserMedia' of undefined".
 // The rejection is self-handled (a no-op catch) so livekit's internal awaits —
@@ -141,7 +150,7 @@ export function useVoiceRoom(channel: VoiceChannel, ids: VoiceIdentity): VoiceRo
     // setMicrophoneEnabled was the "turning on and off does nothing" bug.
     setMuted(nextMuted);
 
-    if (room.localParticipant) {
+    if (room.localParticipant && !micUnavailable) {
       room.localParticipant
         .setMicrophoneEnabled(!nextMuted)
         .then(() => {
