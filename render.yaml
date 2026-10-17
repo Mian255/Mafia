@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: mafia-web
+    runtime: node
+    rootDir: Frontend
+    buildCommand: npm install --legacy-peer-deps && npm run build:web
+    startCommand: npx serve dist -s -l $PORT
+    envVars:
+      - key: NODE_VERSION
+        value: 20
