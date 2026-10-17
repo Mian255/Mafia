@@ -54,9 +54,15 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
   }
 
   if (params.code) {
-    const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
-    if (error) throw error;
-    return data.session;
+    try {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
+      if (error) throw error;
+      return data.session;
+    } catch (exchangeError) {
+      const { data: currentSession } = await supabase.auth.getSession();
+      if (currentSession?.session) return currentSession.session;
+      throw exchangeError;
+    }
   }
 
   const { data: currentSession } = await supabase.auth.getSession();
@@ -76,6 +82,7 @@ export async function signInWithGoogle(): Promise<Session | null> {
 
   const redirectUrl = makeRedirectUri({
     scheme: "mafia",
+    path: "auth/callback",
   });
 
   const { data, error } = await supabase.auth.signInWithOAuth({

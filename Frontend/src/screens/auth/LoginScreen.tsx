@@ -195,7 +195,9 @@ export default function LoginScreen({
       }
     } catch (err: unknown) {
       rateLimiter.recordAttempt('login', userKey);
-      setFormError(getFriendlyAuthError(err, "Google sign-in didn't work. Please try again."));
+      const raw = err instanceof Error ? err.message : String(err ?? '');
+      const friendly = getFriendlyAuthError(err, '');
+      setFormError(friendly || (raw ? `Google sign-in failed: ${raw}` : "Google sign-in didn't work. Please try again."));
     } finally {
       setGoogleLoading(false);
       requestInFlight.current = false;
