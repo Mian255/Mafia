@@ -252,7 +252,9 @@ function AppContent() {
           if (session) {
             try {
               const WebBrowser = require("expo-web-browser");
-              WebBrowser.dismissAuthSession();
+              if (typeof WebBrowser?.dismissAuthSession === "function") {
+                WebBrowser.dismissAuthSession();
+              }
             } catch {}
           }
           if (session && event.url.includes('type=recovery')) {

@@ -1,13 +1,17 @@
 import * as WebBrowser from "expo-web-browser";
-import { makeRedirectUri } from "expo-auth-session";
+import { Linking } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
 try {
-  WebBrowser.maybeCompleteAuthSession();
+  if (typeof WebBrowser?.maybeCompleteAuthSession === "function") {
+    WebBrowser.maybeCompleteAuthSession();
+  }
 } catch {
   // Ignored in headless/initial contexts
 }
+
+export const OAUTH_REDIRECT_URI = "mafia://auth/callback";
 
 /**
  * Collects the parameters from both the query string and the fragment of an OAuth redirect URL.
@@ -113,20 +117,17 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
  */
 export async function signInWithGoogle(): Promise<Session | null> {
   try {
-    WebBrowser.dismissAuthSession();
+    if (typeof WebBrowser?.dismissAuthSession === "function") {
+      WebBrowser.dismissAuthSession();
+    }
   } catch {
     // ignore
   }
 
-  const redirectUrl = makeRedirectUri({
-    scheme: "mafia",
-    path: "auth/callback",
-  });
-
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: redirectUrl,
+      redirectTo: OAUTH_REDIRECT_URI,
       skipBrowserRedirect: true,
       queryParams: {
         access_type: "offline",
@@ -140,14 +141,36 @@ export async function signInWithGoogle(): Promise<Session | null> {
   }
 
   if (data?.url) {
-    const res = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-    if (res.type === "success" && res.url) {
+    let res: WebBrowser.WebBrowserAuthSessionResult | null = null;
+    const openAuth =
+      typeof WebBrowser?.openAuthSessionAsync === "function"
+        ? WebBrowser.openAuthSessionAsync
+        : typeof (WebBrowser as unknown as { default?: typeof WebBrowser })?.default?.openAuthSessionAsync === "function"
+          ? (WebBrowser as unknown as { default: typeof WebBrowser }).default.openAuthSessionAsync
+          : null;
+
+    if (openAuth) {
+      try {
+        res = await openAuth(data.url, OAUTH_REDIRECT_URI);
+      } catch {
+        // Fall back to opening the system browser directly
+        await Linking.openURL(data.url);
+      }
+    } else {
+      await Linking.openURL(data.url);
+    }
+
+    if (res?.type === "success" && res.url) {
       return await createSessionFromUrl(res.url);
     }
-    // Deep link may have already exchanged session in App.tsx
-    const { data: currentSession } = await supabase.auth.getSession();
-    if (currentSession?.session) {
-      return currentSession.session;
+
+    // Polling check in case deep link listener in App.tsx handled the exchange
+    for (let i = 0; i < 8; i++) {
+      const { data: currentSession } = await supabase.auth.getSession();
+      if (currentSession?.session) {
+        return currentSession.session;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
 
