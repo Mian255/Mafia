@@ -114,11 +114,11 @@ function mapActionError(rawMessage: string, fallback: string): string {
   if (message.includes('actor_not_alive') || message.includes('voter_not_alive'))
     return 'Eliminated players cannot act.';
   if (message.includes('no_night_action')) return 'Your role has no night action.';
-  if (message.includes('not_your_turn')) return "It's not your turn yet — wait for the narrator to wake your role.";
+  if (message.includes('not_your_turn')) return "It's not your turn yet — please wait for the narrator to wake your role.";
   if (message.includes('target_not_alive')) return 'That player is already eliminated.';
   if (message.includes('invalid_target')) return 'That is not a valid target.';
   if (message.includes('not_participant')) return 'You are not part of this game.';
-  return fallback;
+  return rawMessage || fallback;
 }
 
 /** Submits (or changes) the current player's night action against a living seat. */
@@ -137,6 +137,24 @@ export async function castVote(gameId: string, targetSeatId: string | null): Pro
     p_target_player_id: targetSeatId,
   });
   if (error) throw new Error(mapActionError(error.message, 'Failed to cast your vote.'));
+}
+
+/** Posts a chat message on behalf of a living bot (SECURITY DEFINER RPC). */
+export async function postBotMessage(
+  gameId: string,
+  channel: string,
+  botName: string,
+  content: string
+): Promise<void> {
+  const { error } = await supabase.rpc('post_bot_message', {
+    p_game_id: gameId,
+    p_channel: channel,
+    p_bot_name: botName,
+    p_content: content,
+  });
+  if (error) {
+    console.warn('postBotMessage RPC failed:', error.message);
+  }
 }
 
 /**

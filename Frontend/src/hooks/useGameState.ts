@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import * as gameApi from '../lib/games';
 import type { GameRow, GamePlayerView, ChatMessage, GameEventRow } from '../lib/games';
 import type { ChatChannel, GameRole, Json, NightStage } from '../types/database';
+import { dispatchBotChat, isBotCoordinator } from '../lib/botChat';
 
 export interface NightResult {
   round: number;
@@ -316,9 +317,26 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
               avatar_url: sender?.avatar_url ?? null,
               isBot: !row.sender_id,
             };
-            setMessages((prev) =>
-              prev.some((m) => m.id === enriched.id) ? prev : [...prev, enriched]
-            );
+            const isHuman = !!row.sender_id;
+            setMessages((prev) => {
+              const updated = prev.some((m) => m.id === enriched.id) ? prev : [...prev, enriched];
+              if (isHuman && (currChannel === 'day' || currChannel === 'mafia')) {
+                if (isBotCoordinator(currentUserId, playersRef.current)) {
+                  void dispatchBotChat({
+                    gameId: gid,
+                    channel: currChannel,
+                    phase: gameRef.current?.phase || '',
+                    round: gameRef.current?.round_number || 1,
+                    players: playersRef.current,
+                    recentMessages: updated,
+                    triggerContent: row.content,
+                    triggerSender: enriched.username,
+                    delayMs: Math.floor(Math.random() * 1200) + 1200,
+                  });
+                }
+              }
+              return updated;
+            });
           }
         )
         .subscribe();
@@ -330,7 +348,30 @@ export function useGameState(roomId: string, currentUserId: string): GameStateVa
       isMounted = false;
       if (msgChannel) supabase.removeChannel(msgChannel);
     };
-  }, [game?.id, activeChannel]);
+  }, [game?.id, activeChannel, currentUserId]);
+
+  // Autonomous bot banter when town discussion phase begins
+  const prevPhaseForBotRef = useRef<string | null>(null);
+  useEffect(() => {
+    const p = game?.phase;
+    if (!p || !game?.id) return;
+    const changed = prevPhaseForBotRef.current !== p;
+    prevPhaseForBotRef.current = p;
+
+    if (changed && p === 'day_discussion') {
+      if (isBotCoordinator(currentUserId, playersRef.current)) {
+        void dispatchBotChat({
+          gameId: game.id,
+          channel: 'day',
+          phase: p,
+          round: game.round_number,
+          players: playersRef.current,
+          recentMessages: messages,
+          delayMs: 3000,
+        });
+      }
+    }
+  }, [game?.phase, game?.id, game?.round_number, currentUserId, messages]);
 
   // Action wrappers. Each calls the RPC then force-ticks so the phase can
   // early-advance the moment the last living human acts (server re-validates).

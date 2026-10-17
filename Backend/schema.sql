@@ -336,7 +336,8 @@ CREATE TABLE IF NOT EXISTS public.night_actions (
     round_number INT NOT NULL,
     actor_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     role TEXT NOT NULL CHECK (role IN ('mafia', 'doctor', 'detective')),
-    target_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    target_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    target_player_id UUID REFERENCES public.game_players(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     CONSTRAINT unique_actor_round_action UNIQUE (game_id, round_number, actor_id)
 );
@@ -654,3 +655,82 @@ BEGIN
         ALTER PUBLICATION supabase_realtime ADD TABLE public.friend_requests;
     END IF;
 END $$;
+
+-- -----------------------------------------------------------------------------
+-- BOT CHAT RPC
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.post_bot_message(
+    p_game_id uuid,
+    p_channel text,
+    p_bot_name text,
+    p_content text
+)
+RETURNS public.messages
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_uid uuid := auth.uid();
+    v_game public.games;
+    v_bot public.game_players;
+    v_msg public.messages;
+    v_clean_content text;
+BEGIN
+    IF v_uid IS NULL THEN
+        RAISE EXCEPTION 'not_authenticated';
+    END IF;
+
+    SELECT * INTO v_game FROM public.games WHERE id = p_game_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'game_not_found';
+    END IF;
+    IF v_game.phase = 'game_over' THEN
+        RAISE EXCEPTION 'game_already_over';
+    END IF;
+
+    IF NOT public.is_game_participant(p_game_id, v_uid) THEN
+        RAISE EXCEPTION 'not_participant';
+    END IF;
+
+    SELECT * INTO v_bot FROM public.game_players
+     WHERE game_id = p_game_id AND is_bot = true AND is_alive = true
+       AND bot_name = p_bot_name
+     LIMIT 1;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'bot_not_found_or_dead';
+    END IF;
+
+    IF p_channel = 'mafia' THEN
+        IF v_bot.role <> 'mafia' THEN
+            RAISE EXCEPTION 'bot_not_mafia';
+        END IF;
+        IF v_game.phase <> 'night' THEN
+            RAISE EXCEPTION 'channel_not_active';
+        END IF;
+    ELSIF p_channel = 'day' THEN
+        IF v_game.phase NOT IN ('day_discussion', 'day_voting', 'dawn', 'result', 'role_reveal') THEN
+            RAISE EXCEPTION 'channel_not_active';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'invalid_bot_channel';
+    END IF;
+
+    v_clean_content := trim(p_content);
+    IF length(v_clean_content) = 0 OR length(v_clean_content) > 500 THEN
+        RAISE EXCEPTION 'invalid_content_length';
+    END IF;
+
+    INSERT INTO public.messages
+        (game_id, room_id, channel, sender_id, sender_display, content)
+    VALUES
+        (p_game_id, v_game.room_id, p_channel, NULL, p_bot_name, v_clean_content)
+    RETURNING * INTO v_msg;
+
+    RETURN v_msg;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.post_bot_message(uuid, text, text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.post_bot_message(uuid, text, text, text) TO authenticated;

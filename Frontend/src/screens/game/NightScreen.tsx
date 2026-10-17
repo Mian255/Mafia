@@ -48,6 +48,13 @@ export default function NightScreen({ state, currentUserId, narratorMessage, spe
     };
   }, [myRole, game?.round_number, getInvestigation, game]);
 
+  // Reset selection and submission state whenever the round or night stage changes
+  useEffect(() => {
+    setSelectedId(null);
+    setSubmitted(false);
+    setSubmitting(false);
+  }, [game?.round_number, nightStage]);
+
   const targets = useMemo<GamePlayerView[]>(
     () =>
       players.filter((p) => {

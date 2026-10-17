@@ -539,6 +539,15 @@ export interface Database {
         Args: { p_game_id: string; p_round_number: number };
         Returns: boolean;
       };
+      post_bot_message: {
+        Args: {
+          p_game_id: string;
+          p_channel: string;
+          p_bot_name: string;
+          p_content: string;
+        };
+        Returns: Database['public']['Tables']['messages']['Row'];
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
